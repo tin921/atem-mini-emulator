@@ -1,0 +1,46 @@
+# Build output
+build/
+*.dll
+*.exe
+*.lib
+*.pdb
+*.obj
+*.ilk
+*.exp
+
+# CMake generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+
+# Qt / MOC generated
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.moc
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Logs and capture output
+captured-output.log
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
