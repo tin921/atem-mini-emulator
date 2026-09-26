@@ -42,6 +42,10 @@ atem-sweep 127.0.0.2 --verify runs\<record-run>\results.json
 # Over USB (API behaviour only: USB traffic can't be captured)
 atem-sweep usb
 
+# Capture another client's traffic (no tests): a recording proxy on
+# 127.0.0.1:9910 for 10 minutes, or until a file "stop" appears in the folder
+atem-sweep 192.168.0.240 --capture 600 --out runs\asc
+
 atem-sweep --list                     # all tests
 atem-sweep 192.168.0.240 --only fly.  # just the PiP position/size tests
 ```

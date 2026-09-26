@@ -12,7 +12,10 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
 #include <QTextStream>
+#include <QThread>
 #include <cstdio>
 #include <iostream>
 
@@ -53,7 +56,10 @@ int main(int argc, char** argv) {
     QCommandLineOption yes("yes", "Do not ask before changing the switcher's output.");
     QCommandLineOption allowCamera("allow-camera", "Also send camera actions (autofocus) to Blackmagic cameras.");
     QCommandLineOption coverageDir("coverage-dir", "Folder with tier1-plugin.txt, tier2-samples.txt, excluded.txt.", "dir");
-    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir });
+    QCommandLineOption capture("capture", "Run no tests: only the recording proxy on 127.0.0.1:9910, for another "
+                                          "client (e.g. ATEM Software Control), for this many seconds or until "
+                                          "a file named \"stop\" appears in the output folder.", "seconds");
+    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture });
     p.process(app);
 
     registerConnectTests();
@@ -78,6 +84,31 @@ int main(int argc, char** argv) {
         p.showHelp(2);
     }
     QString target = p.positionalArguments().first();
+
+    if (p.isSet(capture)) {
+        QString dir = p.isSet(outDir) ? p.value(outDir)
+                                      : QDir(QCoreApplication::applicationDirPath()).filePath(
+                                            "runs/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + "-capture");
+        QDir().mkpath(dir);
+        QFile::remove(dir + "/stop");
+        WireProxy proxy(QHostAddress::LocalHost, QHostAddress(target));
+        QString error;
+        if (!proxy.startProxy(&error)) {
+            QTextStream(stdout) << "Cannot start the proxy on 127.0.0.1:9910: " << error << "\n";
+            return 2;
+        }
+        int seconds = p.value(capture).toInt();
+        QTextStream(stdout) << "Capturing: connect clients to 127.0.0.1, traffic goes to " << target << " ("
+                            << seconds << " s, or create " << QDir::toNativeSeparators(dir + "/stop") << ")\n" << Qt::flush;
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < seconds * 1000LL && !QFile::exists(dir + "/stop")) QThread::msleep(200);
+        proxy.stopProxy();
+        proxy.writeLog(dir + "/wire.jsonl");
+        QTextStream(stdout) << "Wrote " << QDir::toNativeSeparators(dir + "/wire.jsonl") << "\n";
+        return 0;
+    }
+
     opt.target = target.compare("usb", Qt::CaseInsensitive) == 0 ? QString() : target;
     opt.verify = p.isSet(verify);
     opt.goldenPath = p.value(verify);
