@@ -680,9 +680,11 @@ QWidget* MainWindow::buildDveSection()
     lg->addWidget(rl("Y"),  r, 3); lg->addWidget(m_sizeYSpin, r, 4);
     lg->addWidget(m_lockSize, r, 5); ++r;
 
-    // Position in 100ths of the ATEM's frame units: +-1600 / +-900 is the edge.
-    m_posXSpin = makeSpin(-1600, 1600, 0);
-    m_posYSpin = makeSpin(-900,   900, 0);
+    // Position in 100ths of the ATEM's frame units: +-1600 / +-900 is the
+    // frame edge. The switcher accepts far larger values (a PiP parked off
+    // screen), so the boxes go to +-200 units and always show the real value.
+    m_posXSpin = makeSpin(-20000, 20000, 0);
+    m_posYSpin = makeSpin(-20000, 20000, 0);
     connect(m_posXSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
             [this](int v){ DveParams p; p.positionX = v / 100.0; sendDve(PositionX, p); });
     connect(m_posYSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,

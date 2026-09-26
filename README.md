@@ -113,7 +113,7 @@ key and goes on air); click the lit one again to take the PiP off air.
 | Control | Range | Sent to the switcher as |
 | --- | --- | --- |
 | Size X / Size Y | 5–200% | DVE size 0.05–2.0 (Lock keeps X and Y equal) |
-| Position X / Y | ±1600 / ±900 | DVE position ±16 / ±9 — the frame edges |
+| Position X / Y | ±20000 | DVE position in 100ths: ±1600 / ±900 are the frame edges; beyond that the PiP is (partly) off screen |
 | Border width | 0–50 px | DVE border outer width 0–16, border on when > 0 |
 | Border color | picker | DVE border hue / saturation / luma |
 | Crop L/R/T/B | 0–50% | DVE mask (left/right of 32, top/bottom of 18), on while any edge > 0 |
