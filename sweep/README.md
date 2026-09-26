@@ -35,8 +35,9 @@ only run with `--allow-camera`.
 # Record the real ATEM (over Ethernet) — golden record + wire capture
 atem-sweep 192.168.0.240
 
-# Verify the emulator against that record (emulator on this PC)
-atem-sweep 127.0.0.1 --verify runs\<record-run>\results.json
+# Verify the emulator against that record (emulator on this PC, see ../core)
+atem-emu --listen 127.0.0.2
+atem-sweep 127.0.0.2 --verify runs\<record-run>\results.json
 
 # Over USB (API behaviour only: USB traffic can't be captured)
 atem-sweep usb
@@ -52,20 +53,32 @@ folder on `PATH` (or run `windeployqt atem-sweep.exe`).
 
 [golden/atem-mini_sdk10.2.1_proto2.30/](golden/atem-mini_sdk10.2.1_proto2.30) is the
 reference recorded from the real ATEM Mini (protocol 2.30, SDK 10.2.1) on
-2026-09-26: `results.json`, `wire.jsonl` (1,025 packets) and `coverage.txt`.
+2026-09-26: `results.json`, `wire.jsonl` (1,018 packets) and `coverage.txt`.
+The emulator's profile ([../core/profiles](../core/profiles)) is built from it.
 
 | Target | Result |
 |---|---|
 | Real ATEM Mini (record) | 269 passed, 0 failed, 4 skipped (empty macro slots) |
 | Real ATEM Mini vs its own golden record | all match (tally/time-code events excluded, see runner.cpp) |
-| Current emulator vs golden | fails at connect: the SDK rejects the state dump ("corrupt data", `cfcd`) |
+| Emulator core ([../core](../core)) vs golden | 269 passed, 0 failed |
+| Old GUI emulator ([../src](../src)) vs golden | fails at connect: the SDK rejects the state dump ("corrupt data", `cfcd`) |
 
 The real device sends 75 kinds of field (364 fields) when a client connects;
-the emulator sends about 10 — `connect.main` in `results.json` lists them all.
+`connect.main` in `results.json` lists them all.
 
 ```powershell
-atem-sweep 127.0.0.1 --verify golden\atem-mini_sdk10.2.1_proto2.30\results.json
+atem-emu --listen 127.0.0.2
+atem-sweep 127.0.0.2 --verify golden\atem-mini_sdk10.2.1_proto2.30\results.json
 ```
+
+The emulator listens on its own loopback address so the recording proxy can
+stay on 127.0.0.1:9910. A target of 127.0.0.1 itself runs without the proxy
+(no wire capture, and `connect.main` can't count the dump fields).
+
+Some values are left out of the comparison because they don't come from the
+switcher: keys marked `(informational)` (timings, and the media player clip
+state, which an ATEM Mini never sends so the SDK returns whatever its memory
+held) and the tally/time-code events.
 
 ## Output (`runs\<time>-<mode>\`)
 

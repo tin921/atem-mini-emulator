@@ -82,8 +82,9 @@ int main(int argc, char** argv) {
     opt.verify = p.isSet(verify);
     opt.goldenPath = p.value(verify);
     bool local = opt.target == "127.0.0.1" || opt.target.compare("localhost", Qt::CaseInsensitive) == 0;
-    // The proxy listens on 127.0.0.1:9910, so it can't sit in front of a local
-    // emulator (same port) or a USB connection (not network traffic).
+    // The proxy listens on 127.0.0.1:9910, so it can't sit in front of an
+    // emulator on 127.0.0.1 (same port) or a USB connection (not network
+    // traffic). An emulator on 127.0.0.2 (atem-emu --listen 127.0.0.2) is fine.
     opt.useProxy = !p.isSet(noProxy) && !opt.target.isEmpty() && !local;
     opt.connectAddress = opt.useProxy ? QString("127.0.0.1") : opt.target;
     opt.outDir = p.isSet(outDir) ? p.value(outDir)
@@ -109,7 +110,7 @@ int main(int argc, char** argv) {
         QString error;
         if (!wire->startProxy(&error)) {
             QTextStream(stdout) << "\x1b[31mCannot start the proxy on 127.0.0.1:9910: " << error
-                                << " (is the emulator running?)\x1b[0m\n";
+                                << " (is an emulator listening on 127.0.0.1? use --listen 127.0.0.2)\x1b[0m\n";
             return 2;
         }
     }

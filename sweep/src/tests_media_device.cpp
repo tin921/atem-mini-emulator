@@ -207,9 +207,13 @@ void registerMediaTests() {
             SDK_CALL(IBMDSwitcherMediaPlayer, player.p, GetLoop, &loop);
             SDK_CALL(IBMDSwitcherMediaPlayer, player.p, GetAtBeginning, &begin);
             HRESULT fhr = SDK_CALL(IBMDSwitcherMediaPlayer, player.p, GetClipFrame, &frame);
-            c.observe(p, QJsonObject{ { "sourceType", fourcc(static_cast<uint32_t>(type)) }, { "sourceIndex", static_cast<double>(index) },
-                                      { "playing", playing != FALSE }, { "loop", loop != FALSE }, { "atBeginning", begin != FALSE },
-                                      { "clipFrame", SUCCEEDED(fhr) ? QJsonValue(static_cast<double>(frame)) : QJsonValue(hrText(fhr)) } });
+            c.observe(p, QJsonObject{ { "sourceType", fourcc(static_cast<uint32_t>(type)) }, { "sourceIndex", static_cast<double>(index) } });
+            // A switcher without clips (ATEM Mini) never sends the clip play
+            // state, so these read whatever the SDK's memory held: zeros on one
+            // run, "playing, loop, frame 589" on the next. Not compared.
+            c.observe(p + ".clipStatus (informational)",
+                      QJsonObject{ { "playing", playing != FALSE }, { "loop", loop != FALSE }, { "atBeginning", begin != FALSE },
+                                   { "clipFrame", SUCCEEDED(fhr) ? QJsonValue(static_cast<double>(frame)) : QJsonValue(hrText(fhr)) } });
         };
         state("initial");
         c.hr("setSource.still0", SDK_CALL(IBMDSwitcherMediaPlayer, player.p, SetSource, bmdSwitcherMediaPlayerSourceTypeStill, 0));
