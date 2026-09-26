@@ -11,6 +11,11 @@ needing a physical switcher.
 > **Guides:**
 > [Tech stack, architecture & build →](docs/tech.md) · [Protocol capture & reverse engineering →](docs/capture.md)
 
+> **New emulator core:** [core/](core) is a headless emulator rebuilt from
+> recordings of the real ATEM Mini ([sweep/](sweep)). It passes the full
+> atem-sweep conformance check (269/269). The GUI below still uses the older
+> hand-built protocol code, which the SDK currently rejects at connect.
+
 ![ATEM Mini Emulator screenshot](docs/screenshot.png)
 
 ---
