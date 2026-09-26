@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Logger.h"
 #include "vcam_shared.h"
 #include <windows.h>
 #include <QApplication>
@@ -16,6 +17,9 @@
 #include <QFrame>
 #include <QStyledItemDelegate>
 #include <QPainter>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 // ── Sources ───────────────────────────────────────────────────────────────────
 static const struct { quint16 id; const char* hw; const char* full; } kSrc[] = {
@@ -127,6 +131,131 @@ static QPushButton* makeSmallBtn(const char* lbl,
     return s;
 }
 
+// ── Macro JSON persistence ────────────────────────────────────────────────────
+
+/*static*/ QString MainWindow::macroDataPath()
+{
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    QDir().mkpath(dir);
+    return dir + "/macros.json";
+}
+
+void MainWindow::saveMacros()
+{
+    QJsonArray arr;
+    for (int i = 0; i < m_state.macros.size(); ++i) {
+        const auto& mac = m_state.macros[i];
+        if (!mac.isUsed) continue;
+
+        QJsonArray actions;
+        for (const auto& a : mac.actions)
+            actions.append(QJsonObject{{"type",(int)a.type},{"param",a.param}});
+
+        const auto& s = mac.snapshot;
+        QJsonArray inputs;
+        for (int j = 0; j < 4; ++j)
+            inputs.append(QJsonObject{
+                {"mode",(int)s.inputs[j].mode},
+                {"argb",(qint64)s.inputs[j].argb},
+                {"path",s.inputs[j].path}});
+
+        QJsonObject dve{
+            {"enabled", s.dve.enabled},
+            {"fillSrc", s.dve.fillSrc},
+            {"posX",    s.dve.posX},
+            {"posY",    s.dve.posY},
+            {"sizeX",   (qint64)s.dve.sizeX},
+            {"sizeY",   (qint64)s.dve.sizeY},
+            {"border",  (qint64)s.dve.border},
+            {"opacity", (qint64)s.dve.opacity},
+            {"rotation",s.dve.rotation},
+            {"borderArgb",(qint64)s.dve.borderArgb},
+            {"cropLeft",  (qint64)s.dve.cropLeft},
+            {"cropRight", (qint64)s.dve.cropRight},
+            {"cropTop",   (qint64)s.dve.cropTop},
+            {"cropBottom",(qint64)s.dve.cropBottom}};
+
+        arr.append(QJsonObject{
+            {"index",       i},
+            {"name",        mac.name},
+            {"description", mac.description},
+            {"isUsed",      mac.isUsed},
+            {"actions",     actions},
+            {"snapshot", QJsonObject{
+                {"captured",       s.captured},
+                {"programSource",  s.programSource},
+                {"lockSize",       s.lockSize},
+                {"dve",            dve},
+                {"inputs",         inputs}}}});
+    }
+    QFile f(macroDataPath());
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(QJsonDocument(arr).toJson());
+}
+
+bool MainWindow::loadMacros()
+{
+    QFile f(macroDataPath());
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    if (!doc.isArray()) return false;
+
+    bool anyLoaded = false;
+    for (const QJsonValue& v : doc.array()) {
+        QJsonObject o = v.toObject();
+        int i = o["index"].toInt();
+        if (i < 0 || i >= m_state.macros.size()) continue;
+
+        auto& mac = m_state.macros[i];
+        mac.name        = o["name"].toString();
+        mac.description = o["description"].toString();
+        mac.isUsed      = o["isUsed"].toBool();
+
+        mac.actions.clear();
+        for (const QJsonValue& av : o["actions"].toArray())
+            mac.actions.append({(Atem::MacroActionType)av.toObject()["type"].toInt(),
+                                av.toObject()["param"].toInt()});
+
+        QJsonObject sj = o["snapshot"].toObject();
+        auto& s = mac.snapshot;
+        s.captured       = sj["captured"].toBool();
+        s.programSource  = (quint16)sj["programSource"].toInt();
+        s.lockSize       = sj["lockSize"].toBool(true);
+
+        QJsonObject dj = sj["dve"].toObject();
+        s.dve.enabled    = dj["enabled"].toBool();
+        s.dve.fillSrc    = (quint16)dj["fillSrc"].toInt();
+        s.dve.posX       = dj["posX"].toInt();
+        s.dve.posY       = dj["posY"].toInt();
+        s.dve.sizeX      = (quint32)dj["sizeX"].toInt();
+        s.dve.sizeY      = (quint32)dj["sizeY"].toInt();
+        s.dve.border     = (quint32)dj["border"].toInt();
+        s.dve.opacity    = (quint32)dj["opacity"].toInt();
+        s.dve.rotation   = dj["rotation"].toInt();
+        s.dve.borderArgb = (quint32)(qint64)dj["borderArgb"].toDouble();
+        s.dve.cropLeft   = (quint32)dj["cropLeft"].toInt();
+        s.dve.cropRight  = (quint32)dj["cropRight"].toInt();
+        s.dve.cropTop    = (quint32)dj["cropTop"].toInt();
+        s.dve.cropBottom = (quint32)dj["cropBottom"].toInt();
+
+        QJsonArray ij = sj["inputs"].toArray();
+        for (int j = 0; j < 4 && j < ij.size(); ++j) {
+            QJsonObject inp = ij[j].toObject();
+            s.inputs[j].mode = (Atem::InputMode)inp["mode"].toInt();
+            s.inputs[j].argb = (quint32)(qint64)inp["argb"].toDouble();
+            s.inputs[j].path = inp["path"].toString();
+        }
+        anyLoaded = true;
+    }
+    return anyLoaded;
+}
+
+void MainWindow::closeEvent(QCloseEvent* e)
+{
+    saveMacros();
+    QMainWindow::closeEvent(e);
+}
+
 // ── Macro thumb path ──────────────────────────────────────────────────────────
 
 /*static*/ QString MainWindow::macroThumbPath(int slot)
@@ -197,14 +326,17 @@ MainWindow::MainWindow(QWidget* parent)
         m_photoSources[i] = new StaticImageSource(this);
     }
 
-    auto addDemo = [&](int i, const char* n, const char* d,
-                       Atem::MacroActionType t, int p) {
-        m_state.macros[i] = { n, d, true, {{ t, p }}, {} };
-    };
-    addDemo(0, "Cam 1",   "Switch to Camera 1", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM1);
-    addDemo(1, "Cam 2",   "Switch to Camera 2", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM2);
-    addDemo(2, "PiP On",  "Enable PiP",         Atem::MacroActionType::KeyerEnable,   1);
-    addDemo(3, "PiP Off", "Disable PiP",        Atem::MacroActionType::KeyerEnable,   0);
+    if (!loadMacros()) {
+        // First launch — populate demo macros as starting point
+        auto addDemo = [&](int i, const char* n, const char* d,
+                           Atem::MacroActionType t, int p) {
+            m_state.macros[i] = { n, d, true, {{ t, p }}, {} };
+        };
+        addDemo(0, "Cam 1",   "Switch to Camera 1", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM1);
+        addDemo(1, "Cam 2",   "Switch to Camera 2", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM2);
+        addDemo(2, "PiP On",  "Enable PiP",         Atem::MacroActionType::KeyerEnable,   1);
+        addDemo(3, "PiP Off", "Disable PiP",        Atem::MacroActionType::KeyerEnable,   0);
+    }
 
     buildUi();
 
@@ -264,7 +396,11 @@ static void appendLog(QTextEdit* view, const QString& msg)
     }
 }
 
-void MainWindow::uiLog(const QString& msg) { appendLog(m_uiLogView, msg); }
+void MainWindow::uiLog(const QString& msg)
+{
+    appendLog(m_uiLogView, msg);
+    LOG_APP(msg);
+}
 
 // ── Toggle button group helper ────────────────────────────────────────────────
 
@@ -937,6 +1073,7 @@ void MainWindow::onMacroUpdate()
     m_state.macros[slot].description = m_macroDescEdit->toPlainText().trimmed();
     m_state.macros[slot].isUsed      = true;
     m_server.broadcastMPrp(slot);
+    saveMacros();
     syncMacroList();
     for (int i = 0; i < m_macroList->count(); ++i)
         if (m_macroList->item(i)->data(Qt::UserRole).toInt() == slot)
@@ -967,6 +1104,7 @@ void MainWindow::onMacroSaveOutput()
     m_state.macros[slot].snapshot = snap;
     m_state.macros[slot].isUsed   = true;
     m_server.broadcastMPrp(slot);
+    saveMacros();
 
     QImage frame = m_compositor.compose(
         sourceForId(m_state.programSource)->currentFrame(),
@@ -1066,7 +1204,7 @@ void MainWindow::syncMacroList()
     int selSlot = m_macroList->currentItem()
         ? m_macroList->currentItem()->data(Qt::UserRole).toInt() : -1;
     m_macroList->clear();
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < m_state.macros.size(); ++i) {
         const auto& mac = m_state.macros[i];
         auto* item = new QListWidgetItem;
         item->setData(Qt::DisplayRole, mac.name.isEmpty() ? QString("Slot %1").arg(i+1) : mac.name);
@@ -1199,7 +1337,11 @@ void MainWindow::onClientDisconnected(int n)
     } else { onClientConnected(n); }
 }
 
-void MainWindow::onLogMessage(const QString& msg) { appendLog(m_netLogView, msg); }
+void MainWindow::onLogMessage(const QString& msg)
+{
+    appendLog(m_netLogView, msg);
+    LOG_NET(msg);
+}
 
 // ── Source helpers ────────────────────────────────────────────────────────────
 

@@ -67,7 +67,7 @@ struct ATEMState {
     quint16  previewSource = SRC_CAM1;
     bool     keyerOn       = false;
     KeDVState dve;
-    QVector<MacroDef> macros = QVector<MacroDef>(20);
+    QVector<MacroDef> macros = QVector<MacroDef>(100);
     MacroRunStatus    macroRun;
 
     // ── Field serialisers (each returns a complete built field) ──

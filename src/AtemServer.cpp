@@ -76,10 +76,13 @@ void AtemServer::handlePacket(const QByteArray& data, const QHostAddress& addr, 
     if (!parseHeader(data, hdr)) return;
     QByteArray payload = data.mid(HEADER_SIZE);
 
-    emit logMessage(QString("<< %1:%2 [%3b] flags=0x%4 sess=0x%5")
+    emit logMessage(QString("<< %1:%2 [%3b] flags=0x%4 sess=0x%5 ackId=0x%6 remSeq=0x%7 locSeq=0x%8")
                     .arg(addr.toString()).arg(port).arg(data.size())
-                    .arg(hdr.flags, 2, 16, QLatin1Char('0'))
-                    .arg(hdr.session, 4, 16, QLatin1Char('0')));
+                    .arg(hdr.flags,     2, 16, QLatin1Char('0'))
+                    .arg(hdr.session,   4, 16, QLatin1Char('0'))
+                    .arg(hdr.ackId,     4, 16, QLatin1Char('0'))
+                    .arg(hdr.remoteSeq, 4, 16, QLatin1Char('0'))
+                    .arg(hdr.localSeq,  4, 16, QLatin1Char('0')));
 
     if (hdr.flags & FLAG_SYN) {
         handleSyn(hdr, payload, addr, port);
@@ -119,68 +122,63 @@ void AtemServer::handlePacket(const QByteArray& data, const QHostAddress& addr, 
 void AtemServer::handleSyn(const Header& hdr, const QByteArray& /*payload*/,
                            const QHostAddress& addr, quint16 port)
 {
-    // Secondary control-channel SYN (session=0x8000) — no state dump
-    if (hdr.session == CONTROL_SESSION) {
-        emit logMessage("Secondary SYN (0x8000) — no dump");
+    quint16 clientSession = hdr.session;
+
+    // Secondary control-channel SYN (session=0x8000) — echo session, no state dump
+    if (clientSession == CONTROL_SESSION) {
+        emit logMessage(QString("Secondary SYN (0x8000) from %1:%2 — no dump")
+                        .arg(addr.toString()).arg(port));
         QByteArray synPayload(8, '\0');
         synPayload[0] = 0x02;
         quint16 pktLen = HEADER_SIZE + synPayload.size();
-        QByteArray pkt = buildHeader(FLAG_SYN, pktLen, CONTROL_SESSION, hdr.remoteSeq)
-                       + synPayload;
+        QByteArray pkt = buildHeader(FLAG_SYN, pktLen, clientSession) + synPayload;
         m_socket->writeDatagram(pkt, addr, port);
 
         Client c2;
-        c2.session     = CONTROL_SESSION;
+        c2.session     = clientSession;
         c2.addr        = addr;
         c2.port        = port;
         c2.state       = Handshake2;
         c2.lastContact = QDateTime::currentMSecsSinceEpoch();
-        m_clients[CONTROL_SESSION] = c2;
+        m_clients[clientSession] = c2;
         return;
     }
 
-    // SYN retransmit — re-send same SYN-ACK if we already have a pending entry for this addr
+    // SYN retransmit — re-send SYN-ACK using client's session (already in map)
     if (hdr.flags & FLAG_RETRANSMIT) {
-        for (auto& c : m_clients) {
-            if (c.addr == addr && c.port == port && c.state == Handshake) {
-                QByteArray synPayload(8, '\0'); synPayload[0] = 0x02;
-                quint16 pktLen = HEADER_SIZE + synPayload.size();
-                QByteArray pkt = buildHeader(FLAG_SYN, pktLen, c.session, hdr.remoteSeq)
-                               + synPayload;
-                m_socket->writeDatagram(pkt, addr, port);
-                emit logMessage(QString("SYN retransmit -> re-sent SYN-ACK sess=0x%1")
-                                .arg(c.session, 4, 16, QLatin1Char('0')));
-                return;
-            }
+        auto it = m_clients.find(clientSession);
+        if (it != m_clients.end() && it.value().state == Handshake) {
+            QByteArray synPayload(8, '\0'); synPayload[0] = 0x02;
+            quint16 pktLen = HEADER_SIZE + synPayload.size();
+            QByteArray pkt = buildHeader(FLAG_SYN, pktLen, clientSession) + synPayload;
+            m_socket->writeDatagram(pkt, addr, port);
+            emit logMessage(QString("SYN retransmit -> re-sent SYN-ACK sess=0x%1")
+                            .arg(clientSession, 4, 16, QLatin1Char('0')));
+            return;
         }
     }
 
-    // New connection — assign server session with high bit set
-    quint16 serverSession = 0x8000 | (m_sessionCounter & 0x7FFF);
-    m_sessionCounter = (m_sessionCounter + 1) & 0x7FFF;
-    if (m_sessionCounter == 0) m_sessionCounter = 1;
-
-    emit logMessage(QString("SYN from %1:%2 (client 0x%3) -> server sess 0x%4")
+    // New connection — echo the client's own session ID back in the SYN-ACK.
+    // BMDSwitcherAPI SDK requires the same session ID throughout the connection
+    // (SYN-ACK + all state dump packets must use the client's session ID).
+    emit logMessage(QString("SYN from %1:%2 sess=0x%3 -> SYN-ACK (echoing client sess)")
                     .arg(addr.toString()).arg(port)
-                    .arg(hdr.session, 4, 16, QLatin1Char('0'))
-                    .arg(serverSession, 4, 16, QLatin1Char('0')));
+                    .arg(clientSession, 4, 16, QLatin1Char('0')));
 
     QByteArray synPayload(8, '\0');
     synPayload[0] = 0x02;
     quint16 pktLen = HEADER_SIZE + synPayload.size();
-    // Echo client's remoteSeq as ackId so SDK accepts the SYN-ACK immediately
-    QByteArray pkt = buildHeader(FLAG_SYN, pktLen, serverSession, hdr.remoteSeq)
-                   + synPayload;
+    QByteArray pkt = buildHeader(FLAG_SYN, pktLen, clientSession) + synPayload;
     m_socket->writeDatagram(pkt, addr, port);
 
     Client c;
-    c.session     = serverSession;
+    c.session     = clientSession;
     c.addr        = addr;
     c.port        = port;
     c.state       = Handshake;
     c.localSeq    = 0;
     c.lastContact = QDateTime::currentMSecsSinceEpoch();
-    m_clients[serverSession] = c;
+    m_clients[clientSession] = c;
 }
 
 void AtemServer::handleReliable(Client& c, const Header& hdr, const QByteArray& payload)

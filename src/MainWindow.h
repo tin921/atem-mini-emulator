@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QColorDialog>
 #include <QBuffer>
+#include <QCloseEvent>
 
 class MainWindow : public QMainWindow
 {
@@ -23,6 +24,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
+protected:
+    void closeEvent(QCloseEvent* e) override;
 
 private slots:
     void onProgramButton(int sourceId);
@@ -61,6 +65,9 @@ private:
     static QSpinBox* makeSpin(int lo, int hi, int val, const QString& suffix = {});
 
     void uiLog(const QString& msg);
+    void saveMacros();
+    bool loadMacros();   // returns true if file existed and was loaded
+    static QString macroDataPath();
     void setProgramSource(quint16 src);
     void syncProgramButtons();
     void syncKeyerUi();

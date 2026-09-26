@@ -85,11 +85,13 @@ QByteArray ATEMState::fieldMPrp(int i) const
 
 QByteArray ATEMState::fieldMRPr() const
 {
-    // MRPr: 4 bytes — is_running(1) + is_waiting(1) + index(2)
-    QByteArray d(4, '\0');
+    // MRPr: 8 bytes — running(1) + waiting(1) + loop(1) + pad(1) + index(2) + pad(2)
+    QByteArray d(8, '\0');
     d[0] = macroRun.running ? 1 : 0;
     d[1] = macroRun.waiting ? 1 : 0;
-    writeU16BE(reinterpret_cast<quint8*>(d.data()) + 2, macroRun.index);
+    d[2] = 0; // loop
+    d[3] = 0;
+    writeU16BE(reinterpret_cast<quint8*>(d.data()) + 4, macroRun.index);
     return buildField("MRPr", d);
 }
 
@@ -142,127 +144,40 @@ QVector<QByteArray> ATEMState::buildStateDump() const
 {
     QByteArray all;
 
-    // -- Group 1: version, product, topology, pool config --
-    all += buildFieldHex("_ver", "0002001e");
+    // Minimal state dump matching run.py — only fields the BMD SDK requires.
+    // Field order and content must match exactly; extra fields cause StateSync failures.
+
+    // Protocol v2.28 (firmware 8.0) — SDK rejects v2.30+ from a Mini
+    all += buildFieldHex("_ver", "0002001c");
+
     {
-        // _pin: 44 bytes — "ATEM Mini" padded to 40 + model 0x0d + 3 zeros
-        QByteArray name = QByteArray("ATEM Mini").leftJustified(40, '\0');
-        QByteArray pin = name + QByteArray::fromHex("0d000000");
-        all += buildField("_pin", pin);
+        // _pin: 44-byte null-padded name + model byte 0x01 (ATEM Mini base) + 3 pad
+        QByteArray name = QByteArray("ATEM Mini").leftJustified(44, '\0');
+        all += buildField("_pin", name + QByteArray::fromHex("01000000"));
     }
-    all += buildFieldHex("_top", "010e0101000100000401000000000001000001000000010101000000");
-    all += buildFieldHex("_MeC", "00010000");
-    all += buildFieldHex("_mpl", "14000100");
 
-    // -- Group 2: capability tables --
-    all += buildFieldHex("_FAC", "06000000");
-    all += buildFieldHex("_FEC", "00040000010000000000001e0000018b0200000000000064000005c804000000000001c200001ee60800000000000578000054c4");
-    all += buildFieldHex("_VMC", "0008000008000000000000000000000000090000000000000000000000000a0000000000000000000000000b0000000000000000000000001a0000000000000000000000000c0000000000000000000000000d0000000000000000000000001b000000000000000000000000");
-    all += buildFieldHex("_MAC", "64000000");
-    all += buildFieldHex("_DVE", "00010011101112131415161718191a1b1c1d1e1f22000000");
-    all += buildFieldHex("Powr", "01000000");
-    all += buildFieldHex("VidM", "09000000");
-    all += buildFieldHex("AiVM", "00000000");
-    all += buildFieldHex("TcLk", "00000000");
-    all += buildFieldHex("TCCc", "01000000");
+    {
+        // _top: 32 bytes (4-byte aligned) — topology matching run.py
+        static const quint8 topBytes[32] = {
+            1, 8, 2, 1, 0, 1, 1, 0,  // M/E, sources, DSK, AUX, MixMinus, MPs, MVs, rs485
+            0, 1, 1, 0, 0, 0, 0, 1,  // HyperDecks, DVE, stingers, SS, unk×3, scalers
+            0, 0, 1, 0, 0, 0, 1, 1,  // unk×2, camera ctrl, unk×3, adv chroma, cfg outputs
+            1, 0x20, 3, 0xe8, 0, 0, 0, 0  // unk, ATEM Mini bytes, extra padding
+        };
+        all += buildField("_top", QByteArray(reinterpret_cast<const char*>(topBytes), 32));
+    }
 
-    // -- Group 3: input properties (14 sources, exact real device bytes) --
-    static const char* inprHex[] = {
-        "0000426c61636b000000000000000000000000000000424c4b0001000100010001001001",
-        "000143616d657261203100000000000000000000000043414d3101000002000200001101",
-        "000243616d657261203200000000000000000000000043414d3201000002000200001101",
-        "000343616d657261203300000000000000000000000043414d3301000002000200001101",
-        "000443616d657261203400000000000000000000000043414d3401000002000200001101",
-        "03e8436f6c6f722042617273000000000000000000004241525301000100010002001001",
-        "07d1436f6c6f72203100000000000000000000000000434f4c3101000100010003000001",
-        "07d2436f6c6f72203200000000000000000000000000434f4c3201000100010003000001",
-        "0bc24d6564696120506c6179657220310000000000004d50310001000100010004001001",
-        "0bc34d6564696120506c617965722031204b657900004d50314b01000100010005001001",
-        "271a50726f6772616d0000000000000000000000000050474d0001000100010080000100",
-        "271b50726576696577000000000000000000000000005056570001000100010080000100",
-        "2af943616d65726120312044697265637400000000004449520001000002000207000100",
-        "1f414f757470757400000000000000000000000000000000000001000100010081000000",
-    };
-    for (auto h : inprHex)
-        all += buildFieldHex("InPr", h);
-
-    // -- Group 4: M/E state --
+    all += buildFieldHex("_MeC", "00010000");  // M/E 0, 1 keyer
+    all += buildFieldHex("_mpl", "14000000");  // 20 stills, 0 clips
+    all += buildFieldHex("VidM", "31307073");  // bmdSwitcherVideoMode1080p60
     all += fieldPrgI();
     all += fieldPrvI();
-    all += buildFieldHex("TrSS", "0000020002000000");
-    all += buildFieldHex("TrPr", "00000000");
-    all += buildFieldHex("TrPs", "0000190000000000");
-    all += buildFieldHex("TMxP", "00190000");
-    all += buildFieldHex("TDpP", "001907d1");
-    all += buildFieldHex("TWpP", "00190600000007d11388206c1388138800000000");
-    all += buildFieldHex("TDvP", "0019191c0bc20bc3010101f402bc000000000000");
-    all += buildFieldHex("TStP", "0001010001f402bc000000020049002200050000");
+    all += buildFieldHex("_MAC", "64000000");  // 100 macro slots
 
-    // -- Group 5: keyer --
-    all += fieldKeOn();
-    all += buildFieldHex("KeBP", "00000301010000010bc300002328dcd8c1803e80");
-    all += buildFieldHex("KBfT", "000000000bc20bc3");
-    all += buildFieldHex("KBfT", "0000010000040000");
-    all += buildFieldHex("KBfT", "0000020000010000");
-    all += buildFieldHex("KBfT", "0000030000010000");
-    all += buildFieldHex("KeLm", "0000010001f402bc00000000");
-    all += buildFieldHex("KACk", "00000000000001f4000000000000000003e8000000000000");
-    all += buildFieldHex("KACC", "00000000c40a209e026c1a5c065503f7");
-
-    // -- Group 6: FTB, DSK, color, AUX, media --
-    all += buildFieldHex("FtbP", "0019001b");
-    all += buildFieldHex("FtbS", "00000019");
-    all += buildFieldHex("DskB", "00000bc20bc30000");
-    all += buildFieldHex("DskP", "0000190101f402bc00002328dcd8c1803e800000");
-    all += buildFieldHex("DskS", "0000000001190d00");
-    all += buildFieldHex("ColV", "0111010e03e801f4");
-    all += buildFieldHex("AuxS", "0000271a");
-    all += buildFieldHex("MPCE", "00010000");
-    all += buildFieldHex("MPfe", "002c00130000000000000000000000000000000000000000");
-
-    // -- Group 6b: extra keyer/DVE --
-    all += buildFieldHex("KKFP", "000002c2000003e8000003e800000000000000000000000000000000000000000000000000000000016819000000000000000000");
-    all += fieldKeDV();
-    all += buildFieldHex("KeFS", "00000000004d0743");
-    all += buildFieldHex("KePt", "0000061e13881388206c13881388004d");
-
-    // -- Group 6c: monitor, camera control, RX --
-    all += buildFieldHex("MOCP", "00020002fffff25400c801000000008c0000000000002454");
-    all += buildFieldHex("CCdP", "040b00800000000200000000005072700000000000000000");
-    all += buildFieldHex("CCst", "00001388");
-    all += buildFieldHex("CapA", "010c0000");
-    all += buildFieldHex("RXCC", "00030000");
-    all += buildFieldHex("RXCP", "000301000088000000000000000000000000696e");
-    all += buildFieldHex("RXMS", "0003000000000000000000000000009e0002005c");
-    all += buildFieldHex("RXSS", "000303e800000000ffffffff0000000000000000000000000000000000000000");
-
-    // -- Group 6d: Fairlight audio --
-    all += buildFieldHex("FAIP", "05160250000102000206020301ffffff");
-    all += buildFieldHex("FAMP", "0601362500000000000000000000000000ffffff");
-    all += buildFieldHex("FASP", "05160000002c0000ffffffffffff0100010800430000000000ff000006012d010000000000000000000000000000000003010000");
-    all += buildFieldHex("FIEP", "05160302");
-    all += buildFieldHex("FMPP", "00000100");
-    all += buildFieldHex("FMTl", "0006425041454250ffffffffffff0100000100ffffffffffff0100000200ffffffffffff0100000300ffffffffffff0100000400ffffffffffff0100051500ffffffffffff01000516001c5c");
-    all += buildFieldHex("AEBP", "0516000041494c50ffffffffffff01000500330208080100000032640000000000470047");
-    all += buildFieldHex("AICP", "05166b42ffffffffffffffffffff010000000000fffff25400c82d010000008c0000000000002454");
-    all += buildFieldHex("AILP", "0516425041454250ffffffffffff010000fffffffffffb50000000470000000000002454");
-    all += buildFieldHex("AIXP", "051603e846414950ffffffffffff010000000200ffffee6c0708006e0000008c0000000000002454");
-    all += buildFieldHex("AMBP", "050033020808008c000032640000000000470000");
-    all += buildFieldHex("AMLP", "00002454fffffb50000000470000000000002454");
-
-    // -- Group 7: macro pool (100 slots) --
+    // -- Macro pool (100 slots) --
     for (int i = 0; i < 100; ++i)
         all += fieldMPrp(i);
     all += fieldMRPr();
-    all += buildFieldHex("MRcS", "00ff0000");
-
-    // -- Group 8: tally + lock --
-    all += buildFieldHex("NIfT", "00000001000000010000000100000000");
-    all += buildFieldHex("_TlC", "0001000004002454");
-    all += buildFieldHex("TlFc", "00040001000002000003000004000000");
-    all += fieldTlIn();
-    all += fieldTlSr();
-    all += buildFieldHex("LKST", "00000065");
 
     // -- InCm: end of dump --
     all += buildFieldHex("InCm", "00000000");

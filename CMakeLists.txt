@@ -10,6 +10,8 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Multimedia MultimediaW
 
 set(SOURCES
     src/main.cpp
+    src/Logger.h
+    src/Logger.cpp
     src/AtemProtocol.h
     src/AtemState.h
     src/AtemState.cpp

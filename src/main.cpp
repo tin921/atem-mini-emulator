@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Logger.h"
 #include <QApplication>
 #include <QSurfaceFormat>
 
@@ -8,6 +9,8 @@ int main(int argc, char* argv[])
     app.setApplicationName("ATEM Emulator");
     app.setApplicationVersion("1.0");
     app.setOrganizationName("CEMC");
+
+    Logger::instance().open();
 
     MainWindow w;
     w.show();
