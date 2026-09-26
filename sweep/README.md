@@ -64,7 +64,7 @@ The real device sends 75 kinds of field (364 fields) when a client connects;
 the emulator sends about 10 — `connect.main` in `results.json` lists them all.
 
 ```powershell
-atem-sweep 127.0.0.1 --verify goldentem-mini_sdk10.2.1_proto2.30esults.json
+atem-sweep 127.0.0.1 --verify golden\atem-mini_sdk10.2.1_proto2.30\results.json
 ```
 
 ## Output (`runs\<time>-<mode>\`)
