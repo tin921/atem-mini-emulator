@@ -1,6 +1,7 @@
 #include "device.h"
 
 #include <QFile>
+#include <QJsonObject>
 #include <QTextStream>
 #include <algorithm>
 
@@ -62,6 +63,14 @@ Device::Device(QObject* parent) : QObject(parent) {
     registerHandlers();
     m_frameTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_frameTimer, &QTimer::timeout, this, &Device::tick);
+    m_macroTimer.setSingleShot(true);
+    m_macroTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_macroTimer, &QTimer::timeout, this, [this]() {
+        m_out.clear();
+        continueMacro();
+        updateTally();
+        emitOutput();
+    });
 }
 
 bool Device::load(const QString& profileDir, QString* error) {
@@ -78,18 +87,24 @@ bool Device::load(const QString& profileDir, QString* error) {
     const QByteArray* videoMode = m_store.find("VidM");
     m_frameTimer.setInterval(qRound(1000.0 / framesPerSecond(videoMode ? u8(*videoMode, 0) : 0)));
 
-    m_macros.clear();
+    // Stored macros: names from the dump, steps from macros.txt (the fields
+    // each macro changed when atem-sweep ran it on the real switcher).
+    loadMacroPool();
     QFile macros(profileDir + "/macros.txt");
     if (macros.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&macros);
         while (!in.atEnd()) {
             QStringList parts = in.readLine().trimmed().split(' ', Qt::SkipEmptyParts);
             if (parts.size() != 3 || parts[0].startsWith('#')) continue;
-            m_macros[parts[0].toInt()].append({ parts[1].toLatin1(), QByteArray::fromHex(parts[2].toLatin1()) });
+            int index = parts[0].toInt();
+            if (index < 0 || index >= m_pool.size()) continue;
+            m_pool[index].ops.append({ MacroOp::Patch, parts[1].toLatin1(), QByteArray::fromHex(parts[2].toLatin1()), 0 });
         }
     }
-    emit log(QString("Profile %1: %2 fields, %3 recorded macros, %4 ms per frame")
-             .arg(profileDir).arg(m_store.size()).arg(m_macros.size()).arg(m_frameTimer.interval()));
+    int used = 0;
+    for (const Macro& m : m_pool) used += m.used ? 1 : 0;
+    emit log(QString("Profile %1: %2 fields, %3 of %4 macro slots used, %5 ms per frame")
+             .arg(profileDir).arg(m_store.size()).arg(used).arg(m_pool.size()).arg(m_frameTimer.interval()));
     return true;
 }
 
@@ -98,6 +113,13 @@ QString Device::productName() const {
     return pin ? QString::fromUtf8(pin->left(44).constData()) : QString();
 }
 
+namespace {
+// Commands that control macros themselves; never recorded into a macro.
+bool isMacroControl(const QByteArray& name) {
+    return name == "MAct" || name == "MSRc" || name == "MSlp" || name == "MRCP" || name == "CMPr";
+}
+} // namespace
+
 FieldList Device::handle(const QByteArray& name, const QByteArray& data) {
     m_out.clear();
     auto it = m_handlers.constFind(name);
@@ -105,25 +127,37 @@ FieldList Device::handle(const QByteArray& name, const QByteArray& data) {
         emit log("unhandled command " + QString::fromLatin1(name) + " " + QString::fromLatin1(data.toHex()));
         return {};
     }
+    // While a macro is being recorded the switcher stores what it is told to do.
+    if (m_recording.active && !isMacroControl(name))
+        m_recording.macro.ops.append({ MacroOp::Command, name, data, 0 });
     it.value()(data);
     updateTally();
+    if (!m_out.isEmpty()) emit stateChanged();
     return std::exchange(m_out, {});
 }
 
-// Stored macros replay the fields the real macro changed, all at once.
 FieldList Device::endOfPacket() {
     if (m_pendingMacro < 0) return {};
     m_out.clear();
-    for (const Field& f : m_macros.value(m_pendingMacro))
-        if (m_store.replace(f)) m_out.append(f);
+    m_run = { m_pendingMacro, 0, false };
     m_pendingMacro = -1;
-    if (QByteArray* status = m_store.find("MRPr")) {
-        setU8(*status, 0, 0);
-        setU16(*status, 2, 0xffff);
-        send("MRPr", status);
-    }
+    emit macroStarted(m_run.index);
+    continueMacro();
     updateTally();
+    if (!m_out.isEmpty()) emit stateChanged();
     return std::exchange(m_out, {});
+}
+
+void Device::apply(const QByteArray& name, const QByteArray& data) {
+    FieldList out = handle(name, data);
+    out += endOfPacket();
+    if (!out.isEmpty()) emit fieldsChanged(out);
+}
+
+void Device::emitOutput() {
+    if (m_out.isEmpty()) return;
+    emit fieldsChanged(std::exchange(m_out, {}));
+    emit stateChanged();
 }
 
 void Device::send(const char* name, const QByteArray* data) {
@@ -326,7 +360,234 @@ void Device::tick() {
     }
     if (m_animations.isEmpty()) m_frameTimer.stop();
     updateTally();
-    if (!m_out.isEmpty()) emit fieldsChanged(std::exchange(m_out, {}));
+    emitOutput();
+}
+
+// ── Macros ───────────────────────────────────────────────────
+
+QJsonArray Macro::opsToJson() const {
+    static const char* kinds[] = { "command", "patch", "wait", "userWait" };
+    QJsonArray out;
+    for (const MacroOp& op : ops) {
+        QJsonObject o{ { "kind", kinds[op.kind] } };
+        if (op.kind == MacroOp::Command || op.kind == MacroOp::Patch) {
+            o["name"] = QString::fromLatin1(op.name);
+            o["data"] = QString::fromLatin1(op.data.toHex());
+        }
+        if (op.kind == MacroOp::Wait) o["frames"] = op.frames;
+        out.append(o);
+    }
+    return out;
+}
+
+QList<MacroOp> Macro::opsFromJson(const QJsonArray& json) {
+    QList<MacroOp> ops;
+    for (const QJsonValue& v : json) {
+        QJsonObject o = v.toObject();
+        QString kind = o["kind"].toString();
+        MacroOp op;
+        op.kind = kind == "patch" ? MacroOp::Patch : kind == "wait" ? MacroOp::Wait
+                : kind == "userWait" ? MacroOp::UserWait : MacroOp::Command;
+        op.name = o["name"].toString().toLatin1();
+        op.data = QByteArray::fromHex(o["data"].toString().toLatin1());
+        op.frames = o["frames"].toInt();
+        ops.append(op);
+    }
+    return ops;
+}
+
+// Slot count from _MAC, names and descriptions from the MPrp fields.
+void Device::loadMacroPool() {
+    const QByteArray* count = m_store.find("_MAC");
+    m_pool = QVector<Macro>(count ? u8(*count, 0) : 0);
+    for (QByteArray* props : m_store.all("MPrp")) {
+        int index = u16(*props, 0);
+        if (index >= m_pool.size()) continue;
+        Macro& m = m_pool[index];
+        m.used = u8(*props, 2);
+        int nameLength = u16(*props, 4), descLength = u16(*props, 6);
+        m.name = QString::fromUtf8(props->mid(8, nameLength));
+        m.description = QString::fromUtf8(props->mid(8 + nameLength, descLength));
+    }
+}
+
+// MPrp: index, used, has-unsupported-ops, name length, description length,
+// name, description, padded to 4 bytes.
+void Device::publishMacro(int index) {
+    QByteArray* stored = m_store.find("MPrp", key16(static_cast<quint16>(index)));
+    if (!stored) return;
+    const Macro& m = m_pool[index];
+    QByteArray props(8, '\0');
+    setU16(props, 0, static_cast<quint16>(index));
+    if (m.used) {
+        QByteArray name = m.name.toUtf8(), desc = m.description.toUtf8();
+        setU8(props, 2, 1);
+        setU16(props, 4, static_cast<quint16>(name.size()));
+        setU16(props, 6, static_cast<quint16>(desc.size()));
+        props += name + desc;
+        while (props.size() % 4) props.append('\0');
+    }
+    *stored = props;
+    send("MPrp", stored);
+    emit macroPoolChanged(index);
+}
+
+void Device::setMacro(int index, const Macro& macro) {
+    if (index < 0 || index >= m_pool.size()) return;
+    m_out.clear();
+    m_pool[index] = macro;
+    publishMacro(index);
+    emitOutput();
+}
+
+// MRPr: byte 0 bit 0 running, bit 1 waiting for the user; byte 1 loop; index.
+void Device::setRunStatus(bool running, bool waiting, int index) {
+    QByteArray* status = m_store.find("MRPr");
+    if (!status) return;
+    setU8(*status, 0, static_cast<quint8>((running ? 1 : 0) | (waiting ? 2 : 0)));
+    setU16(*status, 2, running ? static_cast<quint16>(index) : 0xffff);
+    send("MRPr", status);
+}
+
+// MRcS: byte 0 recording, index.
+void Device::setRecordingStatus(bool recording, int index) {
+    QByteArray* status = m_store.find("MRcS");
+    if (!status) return;
+    setU8(*status, 0, recording ? 1 : 0);
+    setU16(*status, 2, static_cast<quint16>(index));
+    send("MRcS", status);
+}
+
+// Runs the macro's steps until a wait or the end. Output goes to m_out.
+void Device::continueMacro() {
+    if (m_run.index < 0 || m_run.waitingForUser) return;
+    const Macro& m = m_pool[m_run.index];
+    while (m_run.step < m.ops.size()) {
+        const MacroOp& op = m.ops[m_run.step++];
+        switch (op.kind) {
+        case MacroOp::Command:
+            if (auto h = m_handlers.constFind(op.name); h != m_handlers.constEnd() && !isMacroControl(op.name))
+                h.value()(op.data);
+            break;
+        case MacroOp::Patch:
+            if (m_store.replace({ op.name, op.data })) m_out.append({ op.name, op.data });
+            break;
+        case MacroOp::Wait:
+            m_macroTimer.start(std::max(1, qRound(op.frames * frameIntervalMs())));
+            return;
+        case MacroOp::UserWait:
+            m_run.waitingForUser = true;
+            setRunStatus(true, true, m_run.index);
+            return;
+        }
+    }
+    const QByteArray* status = m_store.find("MRPr");
+    if (status && u8(*status, 1) && !m.ops.isEmpty()) {   // loop: again, one frame later
+        m_run.step = 0;
+        m_macroTimer.start(std::max(1, qRound(frameIntervalMs())));
+        return;
+    }
+    finishMacro();
+}
+
+void Device::finishMacro() {
+    int index = m_run.index;
+    m_run = {};
+    m_macroTimer.stop();
+    setRunStatus(false, false, -1);
+    if (index >= 0) emit macroFinished(index);
+}
+
+// ── Reading the state ────────────────────────────────────────
+
+SwitcherView Device::view() const {
+    SwitcherView v;
+    if (const QByteArray* f = m_store.find("PrgI", key(0))) v.program = u16(*f, 2);
+    if (const QByteArray* f = m_store.find("PrvI", key(0))) {
+        v.preview = u16(*f, 2);
+        v.previewLive = u8(*f, 4);
+    }
+    if (const QByteArray* f = m_store.find("TrPs", key(0))) {
+        v.inTransition = u8(*f, 1);
+        v.transitionPosition = u16(*f, 4) / 10000.0;
+    }
+    if (const QByteArray* f = m_store.find("TrSS", key(0))) {
+        v.transitionStyle = u8(*f, 1);
+        v.nextSelection = u8(*f, 4);
+    }
+    if (const QByteArray* f = m_store.find("KeOn", key(0, 0))) v.keyOnAir = u8(*f, 2);
+    if (const QByteArray* f = m_store.find("KeBP", key(0, 0))) {
+        v.keyType = u8(*f, 2);
+        v.keyCanUseDve = u8(*f, 3);
+        v.keyFill = u16(*f, 6);
+        v.keyCut = u16(*f, 8);
+    }
+    if (const QByteArray* f = m_store.find("KeDV", key(0, 0))) {
+        v.sizeX = u32(*f, 4) / 1000.0;
+        v.sizeY = u32(*f, 8) / 1000.0;
+        v.positionX = i32(*f, 12) / 1000.0;
+        v.positionY = i32(*f, 16) / 1000.0;
+        v.borderEnabled = u8(*f, 24);
+        v.borderWidth = u16(*f, 28) / 100.0;
+        v.borderOpacity = u8(*f, 36) / 100.0;
+        v.borderHue = u16(*f, 38) / 10.0;
+        v.borderSaturation = u16(*f, 40) / 1000.0;
+        v.borderLuma = u16(*f, 42) / 1000.0;
+        v.masked = u8(*f, 47);
+        v.maskTop = u16(*f, 48) / 1000.0;
+        v.maskBottom = u16(*f, 50) / 1000.0;
+        v.maskLeft = u16(*f, 52) / 1000.0;
+        v.maskRight = u16(*f, 54) / 1000.0;
+    }
+    if (const QByteArray* f = m_store.find("FtbS", key(0))) {
+        v.fadeFullyBlack = u8(*f, 1);
+        v.fadeInTransition = u8(*f, 2);
+        v.fadeFramesRemaining = u8(*f, 3);
+    }
+    if (const QByteArray* f = m_store.find("FtbP", key(0))) v.fadeRate = u8(*f, 1);
+    if (const QByteArray* f = m_store.find("DskS", key(0))) {
+        v.dskOnAir = u8(*f, 1);
+        v.dskInTransition = u8(*f, 2);
+        v.dskFramesRemaining = u8(*f, 5);
+    }
+    if (const QByteArray* f = m_store.find("DskP", key(0))) v.dskRate = u8(*f, 2);
+    if (const QByteArray* f = m_store.find("DskB", key(0))) {
+        v.dskFill = u16(*f, 2);
+        v.dskCut = u16(*f, 4);
+    }
+    if (const QByteArray* f = m_store.find("MRPr")) {
+        v.macroRunning = u8(*f, 0) & 0x01;
+        v.macroWaiting = u8(*f, 0) & 0x02;
+        v.macroLoop = u8(*f, 1);
+        v.macroIndex = v.macroRunning ? u16(*f, 2) : -1;
+    }
+    v.macroRecording = m_recording.active;
+    v.macroRecordingIndex = m_recording.active ? m_recording.index : -1;
+    return v;
+}
+
+QList<InputInfo> Device::inputs() const {
+    QList<InputInfo> out;
+    for (const Field& f : m_store.dump()) {
+        if (f.name != "InPr") continue;
+        auto text = [&](int at, int size) {
+            QByteArray b = f.data.mid(at, size);
+            int end = b.indexOf('\0');
+            return QString::fromUtf8(end < 0 ? b : b.left(end));
+        };
+        out.append({ u16(f.data, 0), text(2, 20), text(22, 4), u8(f.data, 26) != 0 });
+    }
+    return out;
+}
+
+// ColV: generator, hue x10, saturation x1000, luma x1000.
+bool Device::colorGenerator(int index, double* hue, double* saturation, double* luma) const {
+    const QByteArray* f = m_store.find("ColV", key(index - 1));
+    if (!f) return false;
+    *hue = u16(*f, 2) / 10.0;
+    *saturation = u16(*f, 4) / 1000.0;
+    *luma = u16(*f, 6) / 1000.0;
+    return true;
 }
 
 // ── Command handlers ─────────────────────────────────────────
@@ -689,30 +950,79 @@ void Device::registerHandlers() {
     // Macros ---------------------------------------------------------------
     h["MAct"] = [this](const QByteArray& d) {
         quint16 index = u16(d, 0);
-        quint8 action = u8(d, 2);
-        QByteArray* status = m_store.find("MRPr");
-        if (!status) return;
-        if (action == 1) {                          // stop: only a macro not yet run
-            if (m_pendingMacro < 0) return;
-            m_pendingMacro = -1;
-            setU8(*status, 0, 0);
-            setU16(*status, 2, 0xffff);
-            send("MRPr", status);
+        switch (u8(d, 2)) {
+        case 0:                                     // run (starts after the rest of the packet)
+            if (index >= m_pool.size() || !m_pool[index].used || m_recording.active) return;
+            if (m_run.index >= 0) finishMacro();
+            setRunStatus(true, false, index);
+            m_pendingMacro = index;
+            return;
+        case 1:                                     // stop
+            if (m_pendingMacro >= 0) {
+                m_pendingMacro = -1;
+                setRunStatus(false, false, -1);
+            } else if (m_run.index >= 0) {
+                finishMacro();
+            }
+            return;
+        case 2:                                     // stop recording: store the macro
+            if (!m_recording.active) return;
+            {
+                int slot = m_recording.index;
+                m_pool[slot] = m_recording.macro;
+                m_pool[slot].used = true;
+                m_recording = {};
+                publishMacro(slot);
+                setRecordingStatus(false, slot);
+                emit log(QString("Macro %1 \"%2\" recorded: %3 steps")
+                         .arg(slot + 1).arg(m_pool[slot].name).arg(m_pool[slot].ops.size()));
+            }
+            return;
+        case 3:                                     // recording: wait for the user here
+            if (m_recording.active) m_recording.macro.ops.append({ MacroOp::UserWait, {}, {}, 0 });
+            return;
+        case 4:                                     // continue after a user wait
+            if (m_run.index >= 0 && m_run.waitingForUser) {
+                m_run.waitingForUser = false;
+                setRunStatus(true, false, m_run.index);
+                continueMacro();
+            }
+            return;
+        case 5:                                     // delete
+            if (index >= m_pool.size() || index == m_run.index) return;
+            m_pool[index] = Macro();
+            publishMacro(index);
             return;
         }
-        if (action != 0) return;                    // continue etc.: nothing waits here
-        const QByteArray* props = m_store.find("MPrp", key16(index));
-        if (!props || !u8(*props, 2)) return;       // empty slot: nothing happens
-        setU8(*status, 0, 1);
-        setU16(*status, 2, index);
-        send("MRPr", status);
-        m_pendingMacro = index;
     };
     h["MRCP"] = [this](const QByteArray& d) {       // macro loop
         QByteArray* status = m_store.find("MRPr");
         if (!status || !(u8(d, 0) & 0x01)) return;
         setU8(*status, 1, u8(d, 1) ? 1 : 0);
         send("MRPr", status);
+    };
+    h["MSRc"] = [this](const QByteArray& d) {       // start recording: index, name, description
+        quint16 index = u16(d, 0);
+        int nameLength = u16(d, 2), descLength = u16(d, 4);
+        if (index >= m_pool.size() || m_recording.active || m_run.index >= 0) return;
+        m_recording.active = true;
+        m_recording.index = index;
+        m_recording.macro = Macro();
+        m_recording.macro.name = QString::fromUtf8(d.mid(6, nameLength));
+        m_recording.macro.description = QString::fromUtf8(d.mid(6 + nameLength, descLength));
+        setRecordingStatus(true, index);
+    };
+    h["MSlp"] = [this](const QByteArray& d) {       // recording: pause for N frames
+        if (m_recording.active) m_recording.macro.ops.append({ MacroOp::Wait, {}, {}, u16(d, 2) });
+    };
+    h["CMPr"] = [this](const QByteArray& d) {       // rename / describe a macro
+        quint8 mask = u8(d, 0);
+        quint16 index = u16(d, 2);
+        int nameLength = u16(d, 4), descLength = u16(d, 6);
+        if (index >= m_pool.size()) return;
+        if (mask & 0x01) m_pool[index].name = QString::fromUtf8(d.mid(8, nameLength));
+        if (mask & 0x02) m_pool[index].description = QString::fromUtf8(d.mid(8 + nameLength, descLength));
+        publishMacro(index);
     };
 
     // Media ----------------------------------------------------------------

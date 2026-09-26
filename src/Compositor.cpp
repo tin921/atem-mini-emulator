@@ -14,49 +14,46 @@ QImage Compositor::compose(const QImage& pgm,
     if (pgm.isNull()) out.fill(Qt::black);
     if (!dve.enabled || pip.isNull()) return out;
 
-    // Apply crop
-    QImage pipSrc = pip;
-    if (dve.cropLeft || dve.cropRight || dve.cropTop || dve.cropBottom) {
-        int cw = pip.width(), ch = pip.height();
-        int cl = qMin((int)(cw * dve.cropLeft   / 100), cw / 2 - 1);
-        int cr = qMin((int)(cw * dve.cropRight  / 100), cw / 2 - 1);
-        int ct = qMin((int)(ch * dve.cropTop    / 100), ch / 2 - 1);
-        int cb = qMin((int)(ch * dve.cropBottom / 100), ch / 2 - 1);
-        pipSrc = pip.copy(cl, ct, qMax(1, cw - cl - cr), qMax(1, ch - ct - cb));
-    }
+    // The box: size 1000 = full frame; the frame is 32 x 18 units, so the
+    // centre moves W/32 per unit (position 16000 puts it on the right edge).
+    double boxW = W * dve.sizeX / 1000.0;
+    double boxH = H * dve.sizeY / 1000.0;
+    if (boxW < 1 || boxH < 1) return out;
+    double left = W / 2.0 + dve.posX / 32000.0 * W - boxW / 2.0;
+    double top  = H / 2.0 - dve.posY / 18000.0 * H - boxH / 2.0;
 
-    double scaleX = dve.sizeX / 1000.0;
-    double scaleY = dve.sizeY / 1000.0;
-    int pipW = qMax(2, (int)(W * scaleX));
-    int pipH = qMax(2, (int)(H * scaleY));
-
-    double cx = W / 2.0 + (dve.posX / 16000.0) * W - pipW / 2.0;
-    double cy = H / 2.0 - (dve.posY /  9000.0) * H - pipH / 2.0;
-    int x = (int)cx, y = (int)cy;
-
-    QImage scaled = pipSrc.scaled(pipW, pipH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-                          .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    // The DVE mask hides edges of the key without rescaling it: left/right
+    // are in 32nds of the width, top/bottom in 18ths of the height.
+    double ml = qBound(0.0, dve.cropLeft   / 32000.0, 1.0);
+    double mr = qBound(0.0, dve.cropRight  / 32000.0, 1.0);
+    double mt = qBound(0.0, dve.cropTop    / 18000.0, 1.0);
+    double mb = qBound(0.0, dve.cropBottom / 18000.0, 1.0);
+    if (ml + mr >= 1.0 || mt + mb >= 1.0) return out;
+    QRectF target(left + boxW * ml, top + boxH * mt, boxW * (1 - ml - mr), boxH * (1 - mt - mb));
+    QRectF source(pip.width() * ml, pip.height() * mt,
+                  pip.width() * (1 - ml - mr), pip.height() * (1 - mt - mb));
 
     QPainter p(&out);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.setRenderHint(QPainter::Antialiasing);
 
     double deg = dve.rotation / 100.0;
     if (deg != 0.0) {
-        double pcx = x + pipW / 2.0, pcy = y + pipH / 2.0;
-        p.translate(pcx, pcy);
+        QPointF c = target.center();
+        p.translate(c);
         p.rotate(deg);
-        p.translate(-pcx, -pcy);
+        p.translate(-c);
     }
 
     p.setOpacity(dve.opacity / 100.0);
-    p.drawImage(x, y, scaled);
+    p.drawImage(target, pip, source);
 
     if (dve.border > 0) {
         p.setOpacity(1.0);
-        int bw = (int)dve.border;
-        p.setPen(QPen(QColor::fromRgba(dve.borderArgb), bw));
+        double bw = dve.border;
+        p.setPen(QPen(QColor::fromRgba(dve.borderArgb), bw, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         p.setBrush(Qt::NoBrush);
-        p.drawRect(x - bw/2, y - bw/2, pipW + bw - 1, pipH + bw - 1);
+        p.drawRect(target.adjusted(-bw / 2, -bw / 2, bw / 2, bw / 2));
     }
     p.end();
     return out;

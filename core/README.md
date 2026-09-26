@@ -11,8 +11,10 @@ every test in it:
 | same, second run on the same emulator | 269 passed |
 | original golden record (different start state) | 268 passed; the 1 difference is a test whose output format changed since |
 
-It has no UI and no video: it is the protocol and the switcher's behaviour.
-The GUI emulator in [../src](../src) can adopt it later.
+It is the protocol and the switcher's behaviour, no video. The emulator app
+([../src](../src), `atem-emulator.exe`) runs on it and adds the window,
+picture and webcam; `atem-emu.exe` is the same switcher without a window.
+The app passes the same check (`atem-emulator --reference --listen 127.0.0.2`).
 
 ## Run
 
@@ -42,7 +44,8 @@ emulator's traffic (`wire.jsonl`) for comparison with the real device's.
 | File | Role |
 |---|---|
 | `src/server.*` | UDP transport: handshake, sessions, reliable packets, acknowledgements, resends, several clients |
-| `src/device.*` | The switcher: state fields plus one handler per command |
+| `src/device.*` | The switcher: state fields, one handler per command, the macro pool, a typed view for UIs |
+| `src/commands.*` | Builders for command payloads, so a local UI uses the same handlers as a client |
 | `src/fields.*` | Field store: the state as raw field payloads, in dump order |
 | `make_profile.py` | Builds a profile from a sweep golden record |
 | `profiles/atem-mini_proto2.30/` | `dump.txt` (the connect dump, 364 fields) and `macros.txt` (what each stored macro changed) |
@@ -72,12 +75,21 @@ device shows, and the emulator copies:
 - Auto transitions, T-bar, fade to black and DSK auto run frame by frame
   (1080p24: 42 ms). Full black drops the program tally.
 - A macro runs after the rest of its packet, so run + stop in one packet
-  stops it before it does anything. Macros replay the fields the real macro
-  changed, as recorded.
+  stops it before it does anything.
+
+**Macros** are the switcher's 100-slot pool. Recording (`MSRc`) stores every
+command the switcher receives until "stop recording", with pauses (`MSlp`) and
+user waits; running replays those commands through the same handlers, frame
+timed, with loop and continue. Names and descriptions change with `CMPr`,
+slots are deleted with `MAct` 5. The recording, rename and delete layouts were
+confirmed with the SDK's own `Record` / `RecordPause` / `StopRecording` /
+`SetName` / `Delete` calls. The profile's four macros (recorded from the real
+ATEM by atem-sweep) replay the fields the real macro changed.
 
 Handled commands: CInL, RInL, CPgI, CPvI, CTPr, DCut, DAut, CTPs, CTTp, CTWp,
 FtbA, FtbC, CKTp, CKeF, CKeC, CKOn, CKMs, CKDV, RFlK, CDsF, CDsC, CDsL, CDsT,
-CDsR, CDsG, CDsM, DDsA, MAct, MRCP, LOCK, MPSS, SCPS, CCmd. Anything else is
+CDsR, CDsG, CDsM, DDsA, MAct, MRCP, MSRc, MSlp, CMPr, LOCK, MPSS, SCPS, CCmd.
+Anything else is
 acknowledged and logged as unhandled.
 
 ## Limits
@@ -85,9 +97,9 @@ acknowledged and logged as unhandled.
 - It emulates what the sweep exercises. Other commands are acknowledged but
   change nothing: audio mixer, camera control, media upload, recording and
   streaming (none of these exist on an ATEM Mini or are recorded yet).
-- Macros replay recorded results; they don't execute macro steps. A macro
-  that was never recorded only reports running and stopped.
-- There is no video.
+- The profile's own macros replay recorded results (their steps can't be
+  read from the device); macros recorded on the emulator run their steps.
+- There is no video (the emulator app draws the picture).
 
 To support more, record the real switcher with atem-sweep (after adding
 tests), rebuild the profile with `make_profile.py`, and extend `device.cpp`

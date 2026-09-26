@@ -62,6 +62,20 @@ bool Server::listen(const QHostAddress& address, quint16 port, QString* error) {
     return true;
 }
 
+void Server::close() {
+    m_housekeeping.stop();
+    m_socket.close();
+    bool had = clientCount() > 0;
+    m_clients.clear();
+    if (had) emit clientCountChanged(0);
+}
+
+int Server::clientCount() const {
+    int n = 0;
+    for (const Client& c : m_clients) n += c.connected ? 1 : 0;
+    return n;
+}
+
 QByteArray Server::header(quint8 flags, int length, quint16 session, quint16 ack, quint16 id) const {
     QByteArray h(kHeaderSize, '\0');
     setU16(h, 0, static_cast<quint16>((flags << 8) | (length & 0x07ff)));
@@ -102,6 +116,7 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
             client.connected = true;
             emit log(QString("%1 connected (session %2)").arg(client.name()).arg(client.session, 4, 16, QChar('0')));
             sendDump(client);
+            emit clientCountChanged(clientCount());
         }
         return;
     }
@@ -132,6 +147,7 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
 
     // Commands: 16-bit length, 2 unused bytes, 4-character name, payload.
     FieldList response;
+    QStringList names;
     QByteArray payload = data.mid(kHeaderSize);
     for (int at = 0; at + 8 <= payload.size();) {
         int length = u16(payload, at);
@@ -139,10 +155,12 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
         QByteArray name = payload.mid(at + 4, 4);
         QByteArray body = payload.mid(at + 8, length - 8);
         if (m_verbose) emit log(QString("%1 > %2 %3").arg(client.name(), QString::fromLatin1(name), QString::fromLatin1(body.toHex())));
+        names << QString::fromLatin1(name);
         response += m_device->handle(name, body);
         at += length;
     }
     response += m_device->endOfPacket();
+    if (!names.isEmpty()) emit commandsReceived(client.name(), names);
     if (response.isEmpty()) {
         sendAck(client, id);
     } else {
@@ -159,7 +177,10 @@ void Server::handleSyn(const QByteArray& data, const QHostAddress& from, quint16
         QByteArray reply = header(kSyn, kHeaderSize + 8, session, 0, 0) + QByteArray(8, '\0');
         setU8(reply, kHeaderSize, 0x05);
         m_socket.writeDatagram(reply, from, port);
-        if (m_clients.remove(key)) emit log(key + " disconnected");
+        if (m_clients.remove(key)) {
+            emit log(key + " disconnected");
+            emit clientCountChanged(clientCount());
+        }
         return;
     }
     if (opcode != 0x01) return;
@@ -240,6 +261,7 @@ void Server::resendAndExpire() {
         if (drop) {
             emit log(c.name() + " timed out");
             it = m_clients.erase(it);
+            emit clientCountChanged(clientCount());
         } else {
             ++it;
         }

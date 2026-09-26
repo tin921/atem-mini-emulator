@@ -31,11 +31,15 @@ public:
     Server(Device* device, QObject* parent = nullptr);
 
     bool listen(const QHostAddress& address, quint16 port, QString* error);
-    int clientCount() const { return m_clients.size(); }
+    void close();                       // drops every client and stops listening
+    bool isListening() const { return m_socket.state() == QAbstractSocket::BoundState; }
+    int clientCount() const;            // connected clients
     void setVerbose(bool verbose) { m_verbose = verbose; }
 
 signals:
     void log(const QString& message);
+    void clientCountChanged(int connected);
+    void commandsReceived(const QString& client, const QStringList& commands);   // one packet
 
 private:
     struct Sent {

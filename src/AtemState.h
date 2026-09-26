@@ -1,88 +1,51 @@
 #pragma once
-#include "AtemProtocol.h"
 #include <QtCore>
+
+// Types shared by the window and the compositor. The switcher state itself
+// (program, key, DVE, macros, ...) lives in the emulator core (emu::Device),
+// which answers the SDK and ATEM Software Control like the real ATEM Mini.
 
 namespace Atem {
 
-// ── DVE / Keyer state ──────────────────────────────────────────────────────
+// ── ATEM Mini input ids ────────────────────────────────────────────────────
+constexpr quint16 SRC_BLACK  = 0;
+constexpr quint16 SRC_CAM1   = 1;
+constexpr quint16 SRC_CAM2   = 2;
+constexpr quint16 SRC_CAM3   = 3;
+constexpr quint16 SRC_CAM4   = 4;
+constexpr quint16 SRC_BARS   = 1000;
+constexpr quint16 SRC_COLOR1 = 2001;
+constexpr quint16 SRC_COLOR2 = 2002;
+
+// ── What the compositor draws for the PiP ──────────────────────────────────
+// Derived each frame from the switcher's upstream key 1 (a DVE key).
+// Position/size/crop use the ATEM's units x1000: the frame is 32 x 18, so
+// position +-16000 / +-9000 is the frame edge and size 1000 is full frame.
 struct KeDVState {
-    bool    enabled = false;
-    quint16 fillSrc = SRC_CAM2;
-    qint32  posX    = 0;       // units: 1/1000 of frame width  (range ~-16000..16000)
-    qint32  posY    = 0;       // units: 1/1000 of frame height (range ~-9000..9000)
-    quint32 sizeX   = 1000;    // 0–2000, 1000 = 100%
-    quint32 sizeY   = 1000;
-    quint32 border      = 0;      // border width 0–50 px at 1280 reference
-    quint32 opacity     = 100;    // 0–100 percent
-    qint32  rotation    = 0;      // degrees × 100 (0–35999)
-    quint32 borderArgb  = 0xFFFFFFFF; // border colour ARGB, default white
-    quint32 cropLeft    = 0;      // 0–50 percent per edge
-    quint32 cropRight   = 0;
-    quint32 cropTop     = 0;
-    quint32 cropBottom  = 0;
+    bool    enabled    = false;
+    quint16 fillSrc    = SRC_CAM2;
+    qint32  posX       = 0;
+    qint32  posY       = 0;
+    quint32 sizeX      = 1000;
+    quint32 sizeY      = 1000;
+    quint32 border     = 0;             // border width in px at 1280 wide
+    quint32 borderArgb = 0xFFFFFFFF;
+    quint32 cropLeft   = 0;             // DVE mask: left/right of 32000, top/bottom of 18000
+    quint32 cropRight  = 0;
+    quint32 cropTop    = 0;
+    quint32 cropBottom = 0;
+    // Emulator-only picture settings (an ATEM Mini can't rotate or fade a key)
+    qint32  rotation   = 0;             // degrees x 100
+    quint32 opacity    = 100;           // percent
 };
 
-// ── Macro ─────────────────────────────────────────────────────────────────
-enum class MacroActionType { SwitchProgram, SwitchPreview, KeyerEnable, Delay };
-
-struct MacroAction {
-    MacroActionType type   = MacroActionType::Delay;
-    int             param  = 500;  // source ID, 0/1, or ms
-};
-
+// ── Camera inputs (what cameras 1-4 show in the emulator) ──────────────────
 enum class InputMode { SolidColor, Photo, Video };
 
 struct InputSnap {
     InputMode mode = InputMode::SolidColor;
     quint32   argb = 0xFF000000;
     QString   path;
-};
-
-struct MacroSnapshot {
-    bool      captured      = false;
-    quint16   programSource = SRC_BARS;
-    KeDVState dve;
-    bool      lockSize      = true;   // UI checkbox — not in KeDVState
-    InputSnap inputs[4];
-};
-
-struct MacroDef {
-    QString              name;
-    QString              description;
-    bool                 isUsed   = false;
-    QVector<MacroAction> actions;
-    MacroSnapshot        snapshot;
-};
-
-struct MacroRunStatus {
-    bool    running = false;
-    bool    waiting = false;
-    quint16 index   = 0xFFFF;
-};
-
-// ── Full device state ──────────────────────────────────────────────────────
-struct ATEMState {
-    // Dynamic — change at runtime, must broadcast updates
-    quint16  programSource = SRC_BARS;
-    quint16  previewSource = SRC_CAM1;
-    bool     keyerOn       = false;
-    KeDVState dve;
-    QVector<MacroDef> macros = QVector<MacroDef>(100);
-    MacroRunStatus    macroRun;
-
-    // ── Field serialisers (each returns a complete built field) ──
-    QByteArray fieldPrgI()       const;
-    QByteArray fieldPrvI()       const;
-    QByteArray fieldKeOn()       const;
-    QByteArray fieldKeDV()       const;
-    QByteArray fieldMPrp(int i)  const;
-    QByteArray fieldMRPr()       const;
-    QByteArray fieldTlIn()       const; // tally by index
-    QByteArray fieldTlSr()       const; // tally by source
-
-    // Build entire state dump as a list of packet payloads, packed ≤900 bytes each.
-    // Each payload is preceded by a header by the caller.
-    QVector<QByteArray> buildStateDump() const;
 };
 
 } // namespace Atem

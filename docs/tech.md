@@ -8,8 +8,9 @@
 | UI framework | Qt 6.x (Widgets, Network, Multimedia) |
 | Build system | CMake 3.28+ with Visual Studio 17 2022 generator |
 | Compiler | MSVC 2022 (cl.exe) — x64 |
+| Switcher | The emulator core ([core/](../core)): Qt Core + Network, no UI |
 | Virtual camera | Win32 COM / DirectShow push-source DLL |
-| Network | Qt `QUdpSocket` — ATEM Mini UDP protocol on port 9910 |
+| Network | Qt `QUdpSocket` — ATEM UDP protocol on port 9910 |
 | Video playback | Qt Multimedia `QMediaPlayer` + `QVideoSink` |
 | Compositing | `QPainter` (software, no GPU) |
 
@@ -19,25 +20,28 @@
 
 ```
 atem-emulator/
-├── CMakeLists.txt              Build config — exe + AtemVirtualCam DLL
+├── CMakeLists.txt              Build config — app, core, AtemVirtualCam DLL
 ├── README.md                   User-facing overview
-├── docs/
-│   ├── tech.md                 This file
-│   ├── capture.md              Protocol capture & reverse engineering
-│   ├── capture.exe.md          capture.exe output format details
-│   └── tools.md                tools/ directory guide
+├── core/                       The switcher: protocol, state, commands, macros
+│   ├── src/server.*            UDP transport (handshake, reliable packets, resends)
+│   ├── src/device.*            State fields + command handlers + macro pool + view
+│   ├── src/fields.*            Field store (the connect dump, changed in place)
+│   ├── src/commands.*          Command payload builders for a local UI
+│   ├── src/main.cpp            atem-emu: the switcher without a window
+│   ├── profiles/               Recorded switchers (dump.txt, macros.txt)
+│   └── make_profile.py         Profile from an atem-sweep golden record
+├── sweep/                      atem-sweep: records the real ATEM, verifies the emulator
+├── docs/                       This file, capture guides
 ├── tools/                      Protocol capture tools (capture.exe)
-└── src/
-    ├── AtemProtocol.h          Header constants, source IDs, packet helpers
-    ├── AtemState.h/cpp         Device state struct + UDP field serialisers
-    ├── AtemServer.h/cpp        UDP server — handshake FSM, command dispatch, keepalive
+└── src/                        The emulator app (window, picture, webcam)
+    ├── AtemState.h             Input ids, PiP drawing state, camera input types
     ├── InputSource.h/cpp       SolidColorSource, StaticImageSource, VideoFileSource
-    ├── Compositor.h/cpp        QPainter DVE compositor (PiP overlay)
-    ├── MacroEngine.h/cpp       QTimer-driven step sequencer
+    ├── Compositor.h/cpp        QPainter compositor (program + DVE PiP)
     ├── PreviewWidget.h/cpp     30 fps program output display widget
     ├── SourceButton.h/cpp      Custom QPushButton with thumbnail + active bar
-    ├── MainWindow.h/cpp        Full application window and GUI logic
-    ├── main.cpp                Entry point
+    ├── MainWindow.h/cpp        Window: sends commands to the core, shows its state
+    ├── Logger.h/cpp            File log
+    ├── main.cpp                Entry point, command-line options
     └── vcam/
         ├── vcam_shared.h       Shared memory layout between exe and DLL
         ├── vcam.cpp            DirectShow push-source COM filter (self-contained)
@@ -49,31 +53,31 @@ atem-emulator/
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  atem-emulator.exe                                               │
-│                                                                  │
-│  MainWindow ──► Compositor ──► PreviewWidget (30 fps display)   │
-│      │              │                                            │
-│      │              └──► Named shared memory ──► AtemVirtualCam.dll
-│      │                   (VCamSharedFrame)        DirectShow device
-│      │
-│      ├──► AtemServer (QUdpSocket, port 9910)
-│      │        handles: CPgI, CPvI, DCut, DAut, CKeO, CDvP, MSRc
-│      │        broadcasts: PrgI, PrvI, KeOn, KeDV, MPrp, MRPr, TlIn, TlSr
-│      │
-│      ├──► MacroEngine (QTimer step sequencer)
-│      │        actions: SwitchProgram, KeyerEnable, Delay
-│      │
-│      └──► InputSource[4]
-│               SolidColorSource | StaticImageSource | VideoFileSource
-│               (QMediaPlayer + QVideoSink for video)
-│
-└──────────────────────────────────────────────────────────────────┘
-
-Connected clients (any number simultaneously):
-  • ATEM Software Control (official Blackmagic app)
-  • BMDSwitcherAPI COM SDK (obs-atem plugin, capture.exe, custom tools)
+┌────────────────────────────────────────────────────────────────────┐
+│  atem-emulator.exe                                                 │
+│                                                                    │
+│  MainWindow ──commands──► emu::Device ◄──commands── emu::Server ◄──┼── UDP 9910
+│      ▲                    (the switcher)            (transport)    │   clients
+│      └──stateChanged / view()──┘   └──fieldsChanged──► all clients │
+│                                                                    │
+│  MainWindow ──► Compositor ──► PreviewWidget (30 fps display)      │
+│                     └──► Named shared memory ──► AtemVirtualCam.dll│
+│                          (VCamSharedFrame)        DirectShow device│
+│  InputSource[4]: SolidColorSource | StaticImageSource | VideoFileSource
+└────────────────────────────────────────────────────────────────────┘
 ```
+
+- **One source of truth.** The switcher state is the core's field store: the
+  connect dump recorded from a real ATEM Mini, changed in place by commands.
+- **One path for changes.** A button in the window builds the same command
+  the SDK would send (`emu::cmd`) and runs it through `Device::apply`, the
+  handlers the network uses. The resulting fields go to every client.
+- **The window follows the switcher.** `Device::stateChanged` (from any
+  client, the window, a running transition or macro) triggers one refresh
+  per event-loop pass from `Device::view()`.
+- **Macros** are the switcher's pool. The window adds per-slot extras the ATEM
+  has no place for (camera pictures, size lock, rotation, opacity) and applies
+  them when the macro starts (`Device::macroStarted`), whoever started it.
 
 ### Virtual camera IPC
 
@@ -88,50 +92,11 @@ DirectShow `VideoInputDeviceCategory` devenum key — no admin rights required.
 
 ---
 
-## ATEM Mini UDP protocol
+## ATEM protocol
 
-The emulator implements the full ATEM Mini protocol as captured from real
-hardware (firmware 8.1.1). All values are big-endian.
-
-### Packet structure
-
-```
-Offset  Size  Field
-0       2     Flags + length  (flags in high 5 bits; length in low 11 bits)
-2       2     Session ID      (server assigns 0x8000 | counter)
-4       2     Remote seq      (client's sequence number)
-6       2     Local ack       (acknowledgement of received packets)
-8       2     Unknown         (flags field, typically 0)
-10      2     Local seq       (sender's sequence number)
-12      N     Payload         (zero or more ATEM fields)
-```
-
-### Handshake
-
-1. Client sends SYN (`flags=0x10`, `local_seq=0x0001`)
-2. Server assigns session ID and replies SYN-ACK (`flags=0x10 0x02`)
-3. Client sends secondary SYN (`session_id=0x8000`)
-4. Server sends state dump (~8–12 packets), ends with `InCm` + empty terminal
-5. Both sides send periodic ACK-only keepalives every ~1 s
-
-### State dump fields (exact order)
-
-`_ver`, `_pin`, `_top`, `Warn`, `InPr` (×14), `MeConf`, `MvIn`, `PrgI`, `PrvI`,
-`TrSS`, `TMxP`, `TDpP`, `TWpP`, `TDvP`, `TSti`, `KeOn`, `KeDV`, `KeLm`,
-`MPrp` (×20), `MRPr`, `TlIn`, `TlSr`, `InCm`
-
-### Commands handled
-
-| Command | Action |
-| --- | --- |
-| `CPgI` | Set program source |
-| `CPvI` | Set preview source |
-| `DCut` | Cut (swap preview to program) |
-| `DAut` | Auto (treated as cut in emulator) |
-| `CKeO` | Keyer on/off |
-| `CDvP` | DVE parameters (fill source, size, position) |
-| `MSRc` | Run macro by index |
-| `MSt` | Stop running macro |
+See [core/README.md](../core/README.md): the transport as captured from the
+real switcher, the state as its connect dump, the command handlers and the
+quirks they copy, and how it is checked with atem-sweep.
 
 ---
 
@@ -140,10 +105,9 @@ Offset  Size  Field
 | Requirement | Tested version |
 | --- | --- |
 | Windows | 10 or 11 (64-bit) |
-| Visual Studio | 2022 Community 17.x — Desktop C++ workload |
-| CMake | 3.28+ |
-| Qt | 6.x MSVC 2022 64-bit (tested with 6.11.0) |
-| Qt Multimedia | Included with Qt; requires Media Foundation on Windows |
+| Visual Studio | 2022 (Community or Build Tools) — Desktop C++ workload |
+| CMake | 3.28+ (bundled with VS) |
+| Qt | 6.11.1 MSVC 2022 64-bit, with the **Qt Multimedia** module |
 
 Qt is the only external dependency. No BMD SDK, no DirectShow SDK, no strmbase —
 the virtual camera DLL is self-contained using only Win32 headers shipped with
@@ -153,36 +117,19 @@ the MSVC SDK.
 
 ## Build steps
 
-Open **Developer PowerShell for VS 2022** (or load VS tools manually):
-
-```powershell
-Import-Module "D:\Program Filesx\Microsoft Visual Studio\2022\Community\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-Enter-VsDevShell -VsInstallPath "D:\Program Filesx\Microsoft Visual Studio\2022\Community" `
-    -DevCmdArguments "-arch=amd64" -SkipAutomaticLocation
-```
-
-### Configure
+From a Developer PowerShell for VS 2022 (or after `vcvars64.bat`):
 
 ```powershell
 cd D:\cemc-sr\atem-emulator
-
-cmake -B build -G "Visual Studio 17 2022" -A x64 `
-    -DQt6_DIR="D:/ProgramFiles/Qt/6.11.0/msvc2022_64/lib/cmake/Qt6"
+cmake -B build-gui -G "Visual Studio 17 2022" -A x64 `
+    -DQt6_DIR="D:/ProgramFiles/Qt/6.11.1/msvc2022_64/lib/cmake/Qt6"
+cmake --build build-gui --config Release
 ```
 
-### Build
-
-```powershell
-cmake --build build --config Release
-```
-
-Outputs:
-
-- `build\Release\atem-emulator.exe`
-- `build\Release\AtemVirtualCam.dll`
-
-Qt runtime DLLs are deployed automatically by `windeployqt6` as a CMake
-post-build step.
+Outputs in `build-gui\Release\`: `atem-emulator.exe`, `AtemVirtualCam.dll`,
+the Qt runtime (`windeployqt6`, post-build) and `profiles\` (copied from
+`core\profiles`, post-build). `build-gui\core\Release\atem-emu.exe` is the
+switcher without a window.
 
 ### First-run (virtual camera registration)
 
@@ -190,7 +137,7 @@ The virtual camera DLL is registered automatically when you click
 **Virtual Camera ON** in the GUI. To register manually from PowerShell:
 
 ```powershell
-regsvr32 build\Release\AtemVirtualCam.dll
+regsvr32 build-gui\Release\AtemVirtualCam.dll
 ```
 
 No admin required — writes to HKCU only.
@@ -199,15 +146,10 @@ No admin required — writes to HKCU only.
 
 ## CMakeLists overview
 
-The build file defines two targets:
-
-1. **`AtemVirtualCam`** (SHARED library, built first)
-   - Sources: `src/vcam/vcam.cpp`, `src/vcam/vcam.def`
-   - Links: `strmiids`, `ole32` (both in Windows SDK)
-   - Output: placed alongside the exe
-
-2. **`atem-emulator`** (WIN32 executable)
-   - Sources: all `src/*.cpp` files
-   - Links: `Qt6::Widgets`, `Qt6::Network`, `Qt6::Multimedia`, `ws2_32`
-   - Depends on: `AtemVirtualCam`
-   - Post-build: `windeployqt6` and copy of `AtemVirtualCam.dll`
+1. **`atem-emu-core`** (static library, `core/`) — the switcher; also builds
+   `atem-emu`.
+2. **`AtemVirtualCam`** (shared library) — `src/vcam/vcam.cpp`, `vcam.def`;
+   links `strmiids`, `ole32`.
+3. **`atem-emulator`** (WIN32 executable) — `src/*.cpp`; links
+   `atem-emu-core`, Qt Widgets/Network/Multimedia; `/utf-8`, `NOMINMAX`;
+   post-build `windeployqt6` and a copy of `core/profiles`.

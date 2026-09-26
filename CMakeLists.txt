@@ -8,21 +8,20 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Multimedia MultimediaWidgets)
 
+# The switcher itself (protocol, state, commands, macros): the emulator core,
+# checked against the real ATEM Mini with atem-sweep. Also builds atem-emu,
+# the same switcher without a window.
+add_subdirectory(core)
+
 set(SOURCES
     src/main.cpp
     src/Logger.h
     src/Logger.cpp
-    src/AtemProtocol.h
     src/AtemState.h
-    src/AtemState.cpp
-    src/AtemServer.h
-    src/AtemServer.cpp
     src/InputSource.h
     src/InputSource.cpp
     src/Compositor.h
     src/Compositor.cpp
-    src/MacroEngine.h
-    src/MacroEngine.cpp
     src/PreviewWidget.h
     src/PreviewWidget.cpp
     src/SourceButton.h
@@ -47,10 +46,17 @@ set_target_properties(AtemVirtualCam PROPERTIES
 add_executable(atem-emulator WIN32 ${SOURCES})
 
 target_include_directories(atem-emulator PRIVATE src src/vcam)
+if(MSVC)
+    target_compile_options(atem-emulator PRIVATE /utf-8)
+endif()
+target_compile_definitions(atem-emulator PRIVATE
+    NOMINMAX
+    ATEM_EMU_PROFILES="${CMAKE_CURRENT_SOURCE_DIR}/core/profiles")
 
 add_dependencies(atem-emulator AtemVirtualCam)
 
 target_link_libraries(atem-emulator PRIVATE
+    atem-emu-core
     Qt6::Core
     Qt6::Widgets
     Qt6::Network
@@ -58,10 +64,13 @@ target_link_libraries(atem-emulator PRIVATE
     Qt6::MultimediaWidgets
 )
 
-# Copy Qt runtime DLLs next to the executable (Release build)
+# Copy Qt runtime DLLs and the switcher profiles next to the executable
 add_custom_command(TARGET atem-emulator POST_BUILD
     COMMAND "${Qt6_DIR}/../../../bin/windeployqt6.exe"
             --no-translations --no-system-d3d-compiler
             "$<TARGET_FILE:atem-emulator>"
-    COMMENT "Deploying Qt runtime"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/core/profiles"
+            "$<TARGET_FILE_DIR:atem-emulator>/profiles"
+    COMMENT "Deploying Qt runtime and switcher profiles"
 )

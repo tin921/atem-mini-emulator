@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "Logger.h"
 #include "vcam_shared.h"
+#include "commands.h"
 #include <windows.h>
 #include <QApplication>
 #include <QHBoxLayout>
@@ -20,6 +21,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QMessageBox>
+#include <cmath>
 
 // ── Sources ───────────────────────────────────────────────────────────────────
 static const struct { quint16 id; const char* hw; const char* full; } kSrc[] = {
@@ -131,7 +134,15 @@ static QPushButton* makeSmallBtn(const char* lbl,
     return s;
 }
 
-// ── Macro JSON persistence ────────────────────────────────────────────────────
+// ── Macro persistence ─────────────────────────────────────────────────────────
+//
+// The macro pool lives in the switcher (the emulator core), like on a real
+// ATEM: clients see it, run it, record into it. The window saves it with the
+// extras the ATEM has no place for (camera pictures, size lock, rotation,
+// opacity) in macros.json:
+//   { "version": 2, "macros": [ { index, name, description, steps, extras } ] }
+// A version-1 file (an array of actions + snapshot) is converted on load and
+// kept as macros-v1.json.
 
 /*static*/ QString MainWindow::macroDataPath()
 {
@@ -140,114 +151,149 @@ static QPushButton* makeSmallBtn(const char* lbl,
     return dir + "/macros.json";
 }
 
+static QJsonArray inputsToJson(const Atem::InputSnap (&inputs)[4])
+{
+    QJsonArray a;
+    for (const auto& in : inputs)
+        a.append(QJsonObject{{"mode",(int)in.mode},{"argb",(qint64)in.argb},{"path",in.path}});
+    return a;
+}
+
+static void inputsFromJson(const QJsonArray& a, Atem::InputSnap (&inputs)[4])
+{
+    for (int j = 0; j < 4 && j < a.size(); ++j) {
+        QJsonObject o = a[j].toObject();
+        inputs[j].mode = (Atem::InputMode)o["mode"].toInt();
+        inputs[j].argb = (quint32)(qint64)o["argb"].toDouble();
+        inputs[j].path = o["path"].toString();
+    }
+}
+
 void MainWindow::saveMacros()
 {
+    if (m_options.reference) return;
     QJsonArray arr;
-    for (int i = 0; i < m_state.macros.size(); ++i) {
-        const auto& mac = m_state.macros[i];
-        if (!mac.isUsed) continue;
-
-        QJsonArray actions;
-        for (const auto& a : mac.actions)
-            actions.append(QJsonObject{{"type",(int)a.type},{"param",a.param}});
-
-        const auto& s = mac.snapshot;
-        QJsonArray inputs;
-        for (int j = 0; j < 4; ++j)
-            inputs.append(QJsonObject{
-                {"mode",(int)s.inputs[j].mode},
-                {"argb",(qint64)s.inputs[j].argb},
-                {"path",s.inputs[j].path}});
-
-        QJsonObject dve{
-            {"enabled", s.dve.enabled},
-            {"fillSrc", s.dve.fillSrc},
-            {"posX",    s.dve.posX},
-            {"posY",    s.dve.posY},
-            {"sizeX",   (qint64)s.dve.sizeX},
-            {"sizeY",   (qint64)s.dve.sizeY},
-            {"border",  (qint64)s.dve.border},
-            {"opacity", (qint64)s.dve.opacity},
-            {"rotation",s.dve.rotation},
-            {"borderArgb",(qint64)s.dve.borderArgb},
-            {"cropLeft",  (qint64)s.dve.cropLeft},
-            {"cropRight", (qint64)s.dve.cropRight},
-            {"cropTop",   (qint64)s.dve.cropTop},
-            {"cropBottom",(qint64)s.dve.cropBottom}};
-
+    for (int i = 0; i < m_device.macroCount(); ++i) {
+        const emu::Macro& mac = m_device.macro(i);
+        if (!mac.used) continue;
+        const MacroExtras& x = m_macroExtras[i];
         arr.append(QJsonObject{
             {"index",       i},
             {"name",        mac.name},
             {"description", mac.description},
-            {"isUsed",      mac.isUsed},
-            {"actions",     actions},
-            {"snapshot", QJsonObject{
-                {"captured",       s.captured},
-                {"programSource",  s.programSource},
-                {"lockSize",       s.lockSize},
-                {"dve",            dve},
-                {"inputs",         inputs}}}});
+            {"steps",       mac.opsToJson()},
+            {"extras", QJsonObject{
+                {"captured", x.captured},
+                {"lockSize", x.lockSize},
+                {"rotation", x.rotation},
+                {"opacity",  x.opacity},
+                {"inputs",   inputsToJson(x.inputs)}}}});
     }
     QFile f(macroDataPath());
     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        f.write(QJsonDocument(arr).toJson());
+        f.write(QJsonDocument(QJsonObject{{"version", 2}, {"macros", arr}}).toJson());
+}
+
+// A version-1 macro (snapshot + actions) as switcher commands.
+static QList<emu::MacroOp> convertV1Macro(const QJsonObject& o, double frameMs)
+{
+    using namespace emu::cmd;
+    QList<emu::MacroOp> ops;
+    auto op = [&](const char* name, const QByteArray& data) { ops.append({emu::MacroOp::Command, name, data, 0}); };
+    QJsonObject sj = o["snapshot"].toObject();
+    if (sj["captured"].toBool()) {
+        QJsonObject dj = sj["dve"].toObject();
+        op("CPgI", programInput(0, (quint16)sj["programSource"].toInt()));
+        op("CKTp", keyType(0, 0, 3));
+        op("CKeF", keyFill(0, 0, (quint16)dj["fillSrc"].toInt()));
+        DveParams p;
+        p.sizeX = dj["sizeX"].toInt() / 1000.0;
+        p.sizeY = dj["sizeY"].toInt() / 1000.0;
+        p.positionX = dj["posX"].toInt() / 1000.0;
+        p.positionY = dj["posY"].toInt() / 1000.0;
+        p.border = dj["border"].toInt() > 0;
+        p.borderWidth = dj["border"].toInt() / 3.125;
+        float h, sat, l;
+        QColor::fromRgba((quint32)(qint64)dj["borderArgb"].toDouble()).getHslF(&h, &sat, &l);
+        p.borderHue = h < 0 ? 0 : h * 360;
+        p.borderSaturation = sat;
+        p.borderLuma = l;
+        p.maskTop = dj["cropTop"].toInt() * 0.18;
+        p.maskBottom = dj["cropBottom"].toInt() * 0.18;
+        p.maskLeft = dj["cropLeft"].toInt() * 0.32;
+        p.maskRight = dj["cropRight"].toInt() * 0.32;
+        p.masked = p.maskTop > 0 || p.maskBottom > 0 || p.maskLeft > 0 || p.maskRight > 0;
+        op("CKDV", dve(0, 0, SizeX | SizeY | PositionX | PositionY | Border | BorderWidth | BorderHue |
+                             BorderSaturation | BorderLuma | Masked | MaskTop | MaskBottom | MaskLeft | MaskRight, p));
+        op("CKOn", keyOnAir(0, 0, dj["enabled"].toBool()));
+    }
+    for (const QJsonValue& av : o["actions"].toArray()) {
+        int type = av.toObject()["type"].toInt(), param = av.toObject()["param"].toInt();
+        if (type == 0) op("CPgI", programInput(0, (quint16)param));          // SwitchProgram
+        else if (type == 1) op("CPvI", previewInput(0, (quint16)param));     // SwitchPreview
+        else if (type == 2) op("CKOn", keyOnAir(0, 0, param != 0));          // KeyerEnable
+        else if (type == 3) ops.append({emu::MacroOp::Wait, {}, {}, std::max(1, (int)std::lround(param / frameMs))});
+    }
+    return ops;
 }
 
 bool MainWindow::loadMacros()
 {
     QFile f(macroDataPath());
     if (!f.open(QIODevice::ReadOnly)) return false;
-    QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-    if (!doc.isArray()) return false;
+    QByteArray raw = f.readAll();
+    f.close();
+    QJsonDocument doc = QJsonDocument::fromJson(raw);
 
-    bool anyLoaded = false;
-    for (const QJsonValue& v : doc.array()) {
+    QJsonArray entries;
+    bool v1 = doc.isArray();
+    if (v1) {
+        entries = doc.array();
+        QFile::remove(QFileInfo(f).absolutePath() + "/macros-v1.json");
+        QFile::copy(macroDataPath(), QFileInfo(f).absolutePath() + "/macros-v1.json");
+    } else if (doc.isObject() && doc.object()["version"].toInt() == 2) {
+        entries = doc.object()["macros"].toArray();
+    } else {
+        return false;
+    }
+
+    // The saved pool replaces the profile's macros.
+    for (int i = 0; i < m_device.macroCount(); ++i) {
+        if (m_device.macro(i).used) m_device.setMacro(i, emu::Macro());
+        m_macroExtras[i] = MacroExtras();
+    }
+    for (const QJsonValue& v : entries) {
         QJsonObject o = v.toObject();
         int i = o["index"].toInt();
-        if (i < 0 || i >= m_state.macros.size()) continue;
-
-        auto& mac = m_state.macros[i];
-        mac.name        = o["name"].toString();
+        if (i < 0 || i >= m_device.macroCount()) continue;
+        if (v1 && !o["isUsed"].toBool()) continue;
+        emu::Macro mac;
+        mac.used = true;
+        mac.name = o["name"].toString();
         mac.description = o["description"].toString();
-        mac.isUsed      = o["isUsed"].toBool();
-
-        mac.actions.clear();
-        for (const QJsonValue& av : o["actions"].toArray())
-            mac.actions.append({(Atem::MacroActionType)av.toObject()["type"].toInt(),
-                                av.toObject()["param"].toInt()});
-
-        QJsonObject sj = o["snapshot"].toObject();
-        auto& s = mac.snapshot;
-        s.captured       = sj["captured"].toBool();
-        s.programSource  = (quint16)sj["programSource"].toInt();
-        s.lockSize       = sj["lockSize"].toBool(true);
-
-        QJsonObject dj = sj["dve"].toObject();
-        s.dve.enabled    = dj["enabled"].toBool();
-        s.dve.fillSrc    = (quint16)dj["fillSrc"].toInt();
-        s.dve.posX       = dj["posX"].toInt();
-        s.dve.posY       = dj["posY"].toInt();
-        s.dve.sizeX      = (quint32)dj["sizeX"].toInt();
-        s.dve.sizeY      = (quint32)dj["sizeY"].toInt();
-        s.dve.border     = (quint32)dj["border"].toInt();
-        s.dve.opacity    = (quint32)dj["opacity"].toInt();
-        s.dve.rotation   = dj["rotation"].toInt();
-        s.dve.borderArgb = (quint32)(qint64)dj["borderArgb"].toDouble();
-        s.dve.cropLeft   = (quint32)dj["cropLeft"].toInt();
-        s.dve.cropRight  = (quint32)dj["cropRight"].toInt();
-        s.dve.cropTop    = (quint32)dj["cropTop"].toInt();
-        s.dve.cropBottom = (quint32)dj["cropBottom"].toInt();
-
-        QJsonArray ij = sj["inputs"].toArray();
-        for (int j = 0; j < 4 && j < ij.size(); ++j) {
-            QJsonObject inp = ij[j].toObject();
-            s.inputs[j].mode = (Atem::InputMode)inp["mode"].toInt();
-            s.inputs[j].argb = (quint32)(qint64)inp["argb"].toDouble();
-            s.inputs[j].path = inp["path"].toString();
+        MacroExtras& x = m_macroExtras[i];
+        if (v1) {
+            mac.ops = convertV1Macro(o, m_device.frameIntervalMs());
+            QJsonObject sj = o["snapshot"].toObject();
+            QJsonObject dj = sj["dve"].toObject();
+            x.captured = sj["captured"].toBool();
+            x.lockSize = sj["lockSize"].toBool(true);
+            x.rotation = dj["rotation"].toInt() / 100;
+            x.opacity = dj.contains("opacity") ? dj["opacity"].toInt() : 100;
+            inputsFromJson(sj["inputs"].toArray(), x.inputs);
+        } else {
+            mac.ops = emu::Macro::opsFromJson(o["steps"].toArray());
+            QJsonObject xj = o["extras"].toObject();
+            x.captured = xj["captured"].toBool();
+            x.lockSize = xj["lockSize"].toBool(true);
+            x.rotation = xj["rotation"].toInt();
+            x.opacity = xj.contains("opacity") ? xj["opacity"].toInt() : 100;
+            inputsFromJson(xj["inputs"].toArray(), x.inputs);
         }
-        anyLoaded = true;
+        m_device.setMacro(i, mac);
     }
-    return anyLoaded;
+    if (v1) saveMacros();
+    return true;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e)
@@ -310,12 +356,12 @@ public:
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(const EmulatorOptions& options, QWidget* parent)
     : QMainWindow(parent)
-    , m_server(&m_state)
-    , m_macroEngine(&m_state, this)
+    , m_options(options)
+    , m_server(&m_device)
 {
-    setWindowTitle("ATEM Mini Emulator");
+    setWindowTitle(m_options.reference ? "ATEM Mini Emulator (reference)" : "ATEM Mini Emulator");
     setStyleSheet(kSS);
     resize(1080, 640);
     setMinimumSize(900, 520);
@@ -326,57 +372,52 @@ MainWindow::MainWindow(QWidget* parent)
         m_photoSources[i] = new StaticImageSource(this);
     }
 
-    if (!loadMacros()) {
-        // First launch — populate demo macros as starting point
-        auto addDemo = [&](int i, const char* n, const char* d,
-                           Atem::MacroActionType t, int p) {
-            m_state.macros[i] = { n, d, true, {{ t, p }}, {} };
-        };
-        addDemo(0, "Cam 1",   "Switch to Camera 1", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM1);
-        addDemo(1, "Cam 2",   "Switch to Camera 2", Atem::MacroActionType::SwitchProgram, Atem::SRC_CAM2);
-        addDemo(2, "PiP On",  "Enable PiP",         Atem::MacroActionType::KeyerEnable,   1);
-        addDemo(3, "PiP Off", "Disable PiP",        Atem::MacroActionType::KeyerEnable,   0);
+    // The switcher: the state recorded from a real ATEM Mini.
+    QString error;
+    if (!m_device.load(m_options.profileDir, &error)) {
+        QMessageBox::critical(nullptr, "ATEM Mini Emulator", "Cannot load the switcher profile:\n" + error);
+        return;
     }
+    m_ready = true;
+    m_macroExtras.resize(m_device.macroCount());
+    if (!m_options.reference) loadMacros();
 
     buildUi();
 
-    connect(&m_server, &Atem::AtemServer::cmdProgramInput,   this, &MainWindow::onCmdProgramInput);
-    connect(&m_server, &Atem::AtemServer::cmdPreviewInput,   this, [this](quint16){});
-    connect(&m_server, &Atem::AtemServer::cmdCut,            this, &MainWindow::onCmdCut);
-    connect(&m_server, &Atem::AtemServer::cmdAuto,           this, &MainWindow::onCmdCut);
-    connect(&m_server, &Atem::AtemServer::cmdKeyerOn,        this, &MainWindow::onCmdKeyerOn);
-    connect(&m_server, &Atem::AtemServer::cmdKeyerDVE,       this, &MainWindow::onCmdKeyerDVE);
-    connect(&m_server, &Atem::AtemServer::cmdMacroRun,       this, &MainWindow::onCmdMacroRun);
-    connect(&m_server, &Atem::AtemServer::cmdMacroStop,      this, &MainWindow::onCmdMacroStop);
-    connect(&m_server, &Atem::AtemServer::clientConnected,   this, &MainWindow::onClientConnected);
-    connect(&m_server, &Atem::AtemServer::clientDisconnected,this, &MainWindow::onClientDisconnected);
-    connect(&m_server, &Atem::AtemServer::logMessage,        this, &MainWindow::onLogMessage);
-    connect(&m_macroEngine, &MacroEngine::macroStarted,      this, &MainWindow::onMacroStarted);
-    connect(&m_macroEngine, &MacroEngine::macroFinished,     this, &MainWindow::onMacroFinished);
-    connect(&m_macroEngine, &MacroEngine::applyAction,       this, &MainWindow::onMacroActionApply);
+    connect(&m_device, &emu::Device::log, this, &MainWindow::onLogMessage);
+    connect(&m_server, &emu::Server::log, this, &MainWindow::onLogMessage);
+    connect(&m_server, &emu::Server::clientCountChanged, this, &MainWindow::onClientCount);
+    connect(&m_server, &emu::Server::commandsReceived, this, [this](const QString& client, const QStringList& cmds) {
+        onLogMessage(client + "  \u2192  " + cmds.join(' '));
+    });
+
+    // Every change (from this window, a client, a running transition or
+    // macro) refreshes the window once per event-loop pass.
+    m_syncTimer.setSingleShot(true);
+    m_syncTimer.setInterval(0);
+    connect(&m_syncTimer, &QTimer::timeout, this, &MainWindow::syncFromDevice);
+    connect(&m_device, &emu::Device::stateChanged, &m_syncTimer, qOverload<>(&QTimer::start));
+    connect(&m_device, &emu::Device::macroStarted,  this, &MainWindow::onMacroStarted);
+    connect(&m_device, &emu::Device::macroFinished, this, &MainWindow::onMacroFinished);
+    m_saveTimer.setSingleShot(true);
+    m_saveTimer.setInterval(500);
+    connect(&m_saveTimer, &QTimer::timeout, this, [this]{ saveMacros(); syncMacroList(); });
+    connect(&m_device, &emu::Device::macroPoolChanged, &m_saveTimer, qOverload<>(&QTimer::start));
 
     m_refreshTimer = new QTimer(this);
     connect(m_refreshTimer, &QTimer::timeout, this, &MainWindow::onRefreshPreview);
     m_refreshTimer->start(33);
 
-    m_netActive = m_server.start();
-    if (!m_netActive) {
-        m_statusLabel->setText("  \u2717  UDP port 9910 in use \u2014 close other instances");
-        m_statusLabel->setStyleSheet("color:#cc4444;font-size:10px;");
-        uiLog("ERROR: Failed to bind UDP port 9910");
-    } else {
-        m_statusLabel->setText(
-            QString("  Listening  \u00b7  UDP 0.0.0.0:%1").arg(Atem::ATEM_PORT));
-    }
+    onNetworkToggle(true);
     updateVCamButtons();
-    updateNetButtons();
-
-    syncMacroList(); syncKeyerUi(); syncProgramButtons();
+    syncMacroList();
+    syncFromDevice();
+    uiLog(QString("Switcher: %1 (%2)").arg(m_device.productName(), QDir::toNativeSeparators(m_options.profileDir)));
 }
 
 MainWindow::~MainWindow()
 {
-    m_server.stop();
+    m_server.close();
     // Ensure virtual cam is cleaned up (same path as toggle-off)
     if (m_webcamActive) onWebcamToggle();
 }
@@ -559,9 +600,15 @@ QWidget* MainWindow::buildPgmBus()
 }
 
 // ── DVE / PiP section ────────────────────────────────────────────────────────
+//
+// The PiP is upstream key 1 as a DVE key, exactly as on the ATEM Mini. The
+// controls send the switcher the same commands the SDK would; the values
+// shown come back from the switcher (so ATEM Software Control, the SDK and
+// this window always agree).
 
 QWidget* MainWindow::buildDveSection()
 {
+    using namespace emu::cmd;
     auto* w = new QWidget; w->setStyleSheet("QWidget{background:#141414;}");
     auto* root = new QVBoxLayout(w);
     root->setSpacing(8); root->setContentsMargins(10, 8, 10, 8);
@@ -614,50 +661,50 @@ QWidget* MainWindow::buildDveSection()
     m_lockSize->setStyleSheet("color:#888;font-size:10px;spacing:4px;");
 
     connect(m_sizeXSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v){
-        m_state.dve.sizeX = (quint32)(v * 10);
         if (m_lockSize->isChecked()) {
-            m_state.dve.sizeY = m_state.dve.sizeX;
             m_sizeYSpin->blockSignals(true); m_sizeYSpin->setValue(v); m_sizeYSpin->blockSignals(false);
         }
-        m_server.broadcastKeDV();
+        sendSize(v, m_sizeYSpin->value());
     });
     connect(m_sizeYSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v){
-        m_state.dve.sizeY = (quint32)(v * 10);
         if (m_lockSize->isChecked()) {
-            m_state.dve.sizeX = m_state.dve.sizeY;
             m_sizeXSpin->blockSignals(true); m_sizeXSpin->setValue(v); m_sizeXSpin->blockSignals(false);
         }
-        m_server.broadcastKeDV();
+        sendSize(m_sizeXSpin->value(), v);
     });
-    onBlur(m_sizeXSpin, [this]{ uiLog(QString("PiP Size X: %1%").arg(m_state.dve.sizeX/10)); });
-    onBlur(m_sizeYSpin, [this]{ uiLog(QString("PiP Size Y: %1%").arg(m_state.dve.sizeY/10)); });
+    onBlur(m_sizeXSpin, [this]{ uiLog(QString("PiP Size X: %1%").arg(m_sizeXSpin->value())); });
+    onBlur(m_sizeYSpin, [this]{ uiLog(QString("PiP Size Y: %1%").arg(m_sizeYSpin->value())); });
 
     lg->addWidget(rl("Size", 52), r, 0);
     lg->addWidget(rl("X"),  r, 1); lg->addWidget(m_sizeXSpin, r, 2);
     lg->addWidget(rl("Y"),  r, 3); lg->addWidget(m_sizeYSpin, r, 4);
     lg->addWidget(m_lockSize, r, 5); ++r;
 
+    // Position in 100ths of the ATEM's frame units: +-1600 / +-900 is the edge.
     m_posXSpin = makeSpin(-1600, 1600, 0);
     m_posYSpin = makeSpin(-900,   900, 0);
     connect(m_posXSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.posX = v * 10; m_server.broadcastKeDV(); });
+            [this](int v){ DveParams p; p.positionX = v / 100.0; sendDve(PositionX, p); });
     connect(m_posYSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.posY = v * 10; m_server.broadcastKeDV(); });
-    onBlur(m_posXSpin, [this]{ uiLog(QString("PiP Pos X: %1").arg(m_state.dve.posX)); });
-    onBlur(m_posYSpin, [this]{ uiLog(QString("PiP Pos Y: %1").arg(m_state.dve.posY)); });
+            [this](int v){ DveParams p; p.positionY = v / 100.0; sendDve(PositionY, p); });
+    onBlur(m_posXSpin, [this]{ uiLog(QString("PiP Pos X: %1").arg(m_posXSpin->value() / 100.0)); });
+    onBlur(m_posYSpin, [this]{ uiLog(QString("PiP Pos Y: %1").arg(m_posYSpin->value() / 100.0)); });
 
     lg->addWidget(rl("Position", 52), r, 0);
     lg->addWidget(rl("X"), r, 1); lg->addWidget(m_posXSpin, r, 2);
     lg->addWidget(rl("Y"), r, 3); lg->addWidget(m_posYSpin, r, 4); ++r;
 
+    // Rotation and opacity are the emulator's own: an ATEM Mini can't do either.
     m_rotationSpin = makeSpin(0, 359, 0, "\xc2\xb0");
     m_opacitySpin  = makeSpin(0, 100, 100, "%");
+    m_rotationSpin->setToolTip("Emulator only: an ATEM Mini can't rotate the PiP");
+    m_opacitySpin->setToolTip("Emulator only: an ATEM Mini can't fade the PiP");
     connect(m_rotationSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.rotation = v * 100; m_server.broadcastKeDV(); });
+            [this](int v){ m_rotation = v; });
     connect(m_opacitySpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.opacity = (quint32)v; m_server.broadcastKeDV(); });
-    onBlur(m_rotationSpin, [this]{ uiLog(QString("PiP Rotation: %1°").arg(m_state.dve.rotation/100)); });
-    onBlur(m_opacitySpin,  [this]{ uiLog(QString("PiP Opacity: %1%").arg(m_state.dve.opacity)); });
+            [this](int v){ m_opacity = v; });
+    onBlur(m_rotationSpin, [this]{ uiLog(QString("PiP Rotation: %1\xc2\xb0").arg(m_rotation)); });
+    onBlur(m_opacitySpin,  [this]{ uiLog(QString("PiP Opacity: %1%").arg(m_opacity)); });
 
     lg->addWidget(rl("Rotation", 52), r, 0);
     lg->addWidget(rl(""),         r, 1); lg->addWidget(m_rotationSpin, r, 2);
@@ -671,41 +718,37 @@ QWidget* MainWindow::buildDveSection()
 
     r = 0;
 
+    // Border in px at 1280 wide; the ATEM's border width runs 0-16 (x3.125).
     m_borderSpin     = makeSpin(0, 50, 0, "px");
     m_borderColorBtn = new QPushButton;
     m_borderColorBtn->setFixedSize(28, 28);
     m_borderColorBtn->setToolTip("Border colour");
-    connect(m_borderSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.border = (quint32)v; m_server.broadcastKeDV(); });
+    connect(m_borderSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v){
+        DveParams p; p.border = v > 0; p.borderWidth = v / 3.125;
+        sendDve(Border | BorderWidth, p);
+    });
     connect(m_borderColorBtn, &QPushButton::clicked, this, &MainWindow::onKeyerBorderColorPick);
-    onBlur(m_borderSpin, [this]{ uiLog(QString("PiP Border: %1px").arg(m_state.dve.border)); });
-    updateBorderColorBtn();
+    onBlur(m_borderSpin, [this]{ uiLog(QString("PiP Border: %1px").arg(m_borderSpin->value())); });
 
     rg->addWidget(rl("Border", 44), r, 0);
     rg->addWidget(rl(""),           r, 1); rg->addWidget(m_borderSpin,     r, 2);
     rg->addWidget(m_borderColorBtn, r, 3); ++r;
 
+    // Crop in percent of the picture; sent as the DVE mask.
     m_cropLSpin = makeSpin(0, 50, 0, "%");
     m_cropRSpin = makeSpin(0, 50, 0, "%");
-    connect(m_cropLSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.cropLeft  = v; m_server.broadcastKeDV(); });
-    connect(m_cropRSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.cropRight = v; m_server.broadcastKeDV(); });
-    onBlur(m_cropLSpin, [this]{ uiLog(QString("PiP Crop L: %1%").arg(m_state.dve.cropLeft));  });
-    onBlur(m_cropRSpin, [this]{ uiLog(QString("PiP Crop R: %1%").arg(m_state.dve.cropRight)); });
+    m_cropTSpin = makeSpin(0, 50, 0, "%");
+    m_cropBSpin = makeSpin(0, 50, 0, "%");
+    for (QSpinBox* sp : { m_cropLSpin, m_cropRSpin, m_cropTSpin, m_cropBSpin })
+        connect(sp, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int){ sendCrop(); });
+    onBlur(m_cropLSpin, [this]{ uiLog(QString("PiP Crop L: %1%").arg(m_cropLSpin->value())); });
+    onBlur(m_cropRSpin, [this]{ uiLog(QString("PiP Crop R: %1%").arg(m_cropRSpin->value())); });
+    onBlur(m_cropTSpin, [this]{ uiLog(QString("PiP Crop T: %1%").arg(m_cropTSpin->value())); });
+    onBlur(m_cropBSpin, [this]{ uiLog(QString("PiP Crop B: %1%").arg(m_cropBSpin->value())); });
 
     rg->addWidget(rl("Crop", 44), r, 0);
     rg->addWidget(rl("L"),        r, 1); rg->addWidget(m_cropLSpin, r, 2);
     rg->addWidget(rl("R"),        r, 3); rg->addWidget(m_cropRSpin, r, 4); ++r;
-
-    m_cropTSpin = makeSpin(0, 50, 0, "%");
-    m_cropBSpin = makeSpin(0, 50, 0, "%");
-    connect(m_cropTSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.cropTop    = v; m_server.broadcastKeDV(); });
-    connect(m_cropBSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ m_state.dve.cropBottom = v; m_server.broadcastKeDV(); });
-    onBlur(m_cropTSpin, [this]{ uiLog(QString("PiP Crop T: %1%").arg(m_state.dve.cropTop));    });
-    onBlur(m_cropBSpin, [this]{ uiLog(QString("PiP Crop B: %1%").arg(m_state.dve.cropBottom)); });
 
     rg->addWidget(rl("", 44),  r, 0);
     rg->addWidget(rl("T"),     r, 1); rg->addWidget(m_cropTSpin, r, 2);
@@ -800,6 +843,7 @@ QWidget* MainWindow::buildMacroSection()
     auto* runBtn    = makeSmallBtn("\u25b6 Play",         "#0a1e0a","#155015","#449944","#102010");
     auto* updateBtn = makeSmallBtn("Update",              "#1a1a0a","#3a3a15","#aaaa44","#202010");
     auto* saveBtn   = makeSmallBtn("\u2299 Save Output",  "#0d1e0d","#1a3a1a","#3a8a3a","#102010");
+    m_macroRunBtn = runBtn;
     m_macroStatus = new QLabel("IDLE");
     m_macroStatus->setStyleSheet("color:#333;font-weight:700;font-size:10px;"
                                  "letter-spacing:1px;background:transparent;border:0;");
@@ -933,56 +977,132 @@ void MainWindow::pushWebcamFrame(const QImage& img)
     if (m_vcamEvent) SetEvent((HANDLE)m_vcamEvent);
 }
 
+// ── Commands to the switcher ──────────────────────────────────────────────────
+//
+// Everything this window changes goes through the switcher's command handlers,
+// exactly as if ATEM Software Control or the SDK had sent it; the switcher
+// then tells every connected client.
+
+void MainWindow::apply(const char* command, const QByteArray& data)
+{
+    m_device.apply(QByteArray(command), data);
+}
+
+void MainWindow::sendDve(quint32 mask, const emu::cmd::DveParams& p)
+{
+    apply("CKDV", emu::cmd::dve(0, 0, mask, p));
+}
+
+void MainWindow::sendSize(int percentX, int percentY)
+{
+    emu::cmd::DveParams p;
+    p.sizeX = percentX / 100.0;
+    p.sizeY = percentY / 100.0;
+    sendDve(emu::cmd::SizeX | emu::cmd::SizeY, p);
+}
+
+// Crop spin boxes are percent of the picture; the DVE mask is in frame units
+// (top/bottom of 18, left/right of 32). Masking is on while any edge is > 0.
+void MainWindow::sendCrop()
+{
+    using namespace emu::cmd;
+    DveParams p;
+    p.maskTop    = m_cropTSpin->value() * 0.18;
+    p.maskBottom = m_cropBSpin->value() * 0.18;
+    p.maskLeft   = m_cropLSpin->value() * 0.32;
+    p.maskRight  = m_cropRSpin->value() * 0.32;
+    p.masked = p.maskTop > 0 || p.maskBottom > 0 || p.maskLeft > 0 || p.maskRight > 0;
+    sendDve(Masked | MaskTop | MaskBottom | MaskLeft | MaskRight, p);
+}
+
+QString MainWindow::sourceName(quint16 id) const
+{
+    for (const auto& in : m_device.inputs())
+        if (in.id == id) return in.longName;
+    return QString("input %1").arg(id);
+}
+
+static QColor hslColor(double hue, double saturation, double luma, double alpha = 1.0)
+{
+    double h = std::fmod(hue, 360.0) / 360.0;
+    if (h < 0) h += 1.0;
+    return QColor::fromHslF(float(h), float(qBound(0.0, saturation, 1.0)),
+                            float(qBound(0.0, luma, 1.0)), float(qBound(0.0, alpha, 1.0)));
+}
+
 // ── Slots ─────────────────────────────────────────────────────────────────────
 
 void MainWindow::setProgramSource(quint16 src)
 {
-    m_state.programSource = src; m_state.previewSource = src;
-    syncProgramButtons();
-    m_server.broadcastPrgI(); m_server.broadcastPrvI(); m_server.broadcastTally();
+    apply("CPgI", emu::cmd::programInput(0, src));
 }
 
 void MainWindow::onProgramButton(int id)
 {
-    const char* name = "?";
-    for (int i = 0; i < kN; ++i) if (kSrc[i].id == id) { name = kSrc[i].full; break; }
-    uiLog(QString("PGM \u2192 %1").arg(name));
+    uiLog(QString("PGM → %1").arg(sourceName((quint16)id)));
     setProgramSource((quint16)id);
 }
 
+// Button labels follow the switcher's input names once they are renamed
+// (e.g. in ATEM Software Control).
 void MainWindow::syncProgramButtons()
 {
-    for (int i = 0; i < kN; ++i)
-        if (m_pgmBtns[i]) m_pgmBtns[i]->setActive(kSrc[i].id == m_state.programSource);
+    emu::SwitcherView v = m_device.view();
+    QList<emu::InputInfo> inputs = m_device.inputs();
+    for (int i = 0; i < kN; ++i) {
+        QString label = kSrc[i].hw;
+        for (const auto& in : inputs)
+            if (in.id == kSrc[i].id && !in.namesDefault && !in.shortName.isEmpty()) label = in.shortName;
+        if (m_pgmBtns[i]) {
+            m_pgmBtns[i]->setText(label);
+            m_pgmBtns[i]->setActive(kSrc[i].id == v.program);
+        }
+        if (m_fillBtns[i]) m_fillBtns[i]->setText(label);
+    }
 }
 
+// Fill buttons: pressing the lit one takes the PiP off air; another one makes
+// it the PiP source (as a DVE key) and puts the PiP on air.
 void MainWindow::onFillBtn(int idx)
 {
     quint16 src = kSrc[idx].id;
-    if (m_state.dve.enabled && m_state.dve.fillSrc == src) {
-        m_state.dve.enabled = false; m_state.keyerOn = false;
+    emu::SwitcherView v = m_device.view();
+    if (v.keyOnAir && v.keyType == 3 && v.keyFill == src) {
+        apply("CKOn", emu::cmd::keyOnAir(0, 0, false));
         uiLog("PiP: Off");
-    } else {
-        m_state.dve.enabled = true; m_state.keyerOn = true; m_state.dve.fillSrc = src;
-        uiLog(QString("PiP Fill \u2192 %1").arg(kSrc[idx].full));
+        return;
     }
-    syncKeyerUi(); m_server.broadcastKeOn(); m_server.broadcastKeDV();
+    if (v.keyType != 3) {
+        if (!v.keyCanUseDve)
+            uiLog("PiP: the DVE transition is using the DVE — set the next transition to Mix first");
+        apply("CKTp", emu::cmd::keyType(0, 0, 3));
+    }
+    apply("CKeF", emu::cmd::keyFill(0, 0, src));
+    apply("CKOn", emu::cmd::keyOnAir(0, 0, true));
+    uiLog(QString("PiP Fill → %1").arg(sourceName(src)));
 }
 
 void MainWindow::onKeyerBorderColorPick()
 {
-    QColor c = QColorDialog::getColor(QColor::fromRgba(m_state.dve.borderArgb),
+    emu::SwitcherView v = m_device.view();
+    QColor c = QColorDialog::getColor(hslColor(v.borderHue, v.borderSaturation, v.borderLuma),
                                       this, "PiP Border Colour");
     if (!c.isValid()) return;
-    m_state.dve.borderArgb = c.rgba();
-    updateBorderColorBtn(); m_server.broadcastKeDV();
+    float h, s, l;
+    c.getHslF(&h, &s, &l);
+    emu::cmd::DveParams p;
+    p.borderHue = h < 0 ? 0 : h * 360;
+    p.borderSaturation = s;
+    p.borderLuma = l;
+    sendDve(emu::cmd::BorderHue | emu::cmd::BorderSaturation | emu::cmd::BorderLuma, p);
     uiLog(QString("PiP Border Colour: %1").arg(c.name()));
 }
 
 void MainWindow::updateBorderColorBtn()
 {
     if (!m_borderColorBtn) return;
-    QColor c = QColor::fromRgba(m_state.dve.borderArgb);
+    emu::SwitcherView v = m_device.view();
+    QColor c = hslColor(v.borderHue, v.borderSaturation, v.borderLuma);
     m_borderColorBtn->setStyleSheet(
         QString("QPushButton{background:%1;border:1px solid %2;border-radius:3px;}"
                 "QPushButton:hover{background:%3;}")
@@ -991,24 +1111,36 @@ void MainWindow::updateBorderColorBtn()
 
 void MainWindow::syncKeyerUi()
 {
-    auto blk = [](QSpinBox* w, int v){ if(w){w->blockSignals(true);w->setValue(v);w->blockSignals(false);} };
-
+    auto blk = [](QSpinBox* w, int v) {
+        if (!w || w->value() == v) return;
+        w->blockSignals(true); w->setValue(v); w->blockSignals(false);
+    };
+    emu::SwitcherView v = m_device.view();
+    bool pipOn = v.keyOnAir && v.keyType == 3;
     for (int i = 0; i < kN; ++i)
-        if (m_fillBtns[i])
-            m_fillBtns[i]->setActive(m_state.dve.enabled && m_state.dve.fillSrc == kSrc[i].id);
+        if (m_fillBtns[i]) m_fillBtns[i]->setActive(pipOn && v.keyFill == kSrc[i].id);
 
-    blk(m_sizeXSpin, (int)m_state.dve.sizeX/10);
-    blk(m_sizeYSpin, (int)m_state.dve.sizeY/10);
-    blk(m_posXSpin,  m_state.dve.posX/10);
-    blk(m_posYSpin,  m_state.dve.posY/10);
-    blk(m_rotationSpin, m_state.dve.rotation/100);
-    blk(m_borderSpin,   (int)m_state.dve.border);
-    blk(m_opacitySpin,  (int)m_state.dve.opacity);
-    blk(m_cropLSpin,    (int)m_state.dve.cropLeft);
-    blk(m_cropRSpin,    (int)m_state.dve.cropRight);
-    blk(m_cropTSpin,    (int)m_state.dve.cropTop);
-    blk(m_cropBSpin,    (int)m_state.dve.cropBottom);
+    blk(m_sizeXSpin, qRound(v.sizeX * 100));
+    blk(m_sizeYSpin, qRound(v.sizeY * 100));
+    blk(m_posXSpin,  qRound(v.positionX * 100));
+    blk(m_posYSpin,  qRound(v.positionY * 100));
+    blk(m_borderSpin, v.borderEnabled ? qRound(v.borderWidth * 3.125) : 0);
+    blk(m_cropTSpin, v.masked ? qRound(v.maskTop / 0.18) : 0);
+    blk(m_cropBSpin, v.masked ? qRound(v.maskBottom / 0.18) : 0);
+    blk(m_cropLSpin, v.masked ? qRound(v.maskLeft / 0.32) : 0);
+    blk(m_cropRSpin, v.masked ? qRound(v.maskRight / 0.32) : 0);
+    blk(m_rotationSpin, m_rotation);
+    blk(m_opacitySpin, m_opacity);
     updateBorderColorBtn();
+}
+
+void MainWindow::syncFromDevice()
+{
+    emu::SwitcherView v = m_device.view();
+    if (!v.fadeInTransition) m_fadeFromBlack = v.fadeFullyBlack;
+    syncProgramButtons();
+    syncKeyerUi();
+    updateMacroStatus();
 }
 
 void MainWindow::updateColorBtnStyle(int i)
@@ -1030,7 +1162,7 @@ void MainWindow::onInputColorPick(int i)
     m_sources[i]->setColor(c); m_useVideo[i] = false; m_usePhoto[i] = false;
     updateColorBtnStyle(i);
     if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText("Media");
-    uiLog(QString("CAM%1 colour \u2192 %2").arg(i+1).arg(c.name()));
+    uiLog(QString("CAM%1 colour → %2").arg(i+1).arg(c.name()));
 }
 
 void MainWindow::onInputMediaBrowse(int i)
@@ -1046,114 +1178,137 @@ void MainWindow::onInputMediaBrowse(int i)
     if (imgs.contains(ext)) {
         if (!m_photoSources[i]->loadFile(path)) { uiLog(QString("CAM%1: failed to load image").arg(i+1)); return; }
         m_usePhoto[i] = true; m_useVideo[i] = false;
-        uiLog(QString("CAM%1 photo \u2192 %2").arg(i+1).arg(fn));
+        uiLog(QString("CAM%1 photo → %2").arg(i+1).arg(fn));
     } else {
         m_videoSources[i]->loadFile(path); m_useVideo[i] = true; m_usePhoto[i] = false;
-        uiLog(QString("CAM%1 video \u2192 %2").arg(i+1).arg(fn));
+        uiLog(QString("CAM%1 video → %2").arg(i+1).arg(fn));
     }
     if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(fn.left(8));
 }
 
 // ── Macros ────────────────────────────────────────────────────────────────────
+//
+// The list is the switcher's macro pool: macros recorded in ATEM Software
+// Control show up here, and macros saved here show up there and in the SDK.
 
 void MainWindow::onMacroRun()
 {
+    emu::SwitcherView v = m_device.view();
+    if (v.macroRunning) {                            // the button is "Stop" while a macro runs
+        apply("MAct", emu::cmd::macroAction(0xffff, 1));
+        uiLog("Macro stopped");
+        return;
+    }
     auto* sel = m_macroList->currentItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
-    uiLog(QString("Macro run: \"%1\"").arg(m_state.macros[slot].name));
-    applyMacroSnapshot(slot);   // restore full DVE state, size, border, lock, inputs
-    m_macroEngine.runMacro(slot);
+    if (!m_device.macro(slot).used) { uiLog(QString("Macro slot %1 is empty").arg(slot + 1)); return; }
+    uiLog(QString("Macro run: \"%1\"").arg(m_device.macro(slot).name));
+    apply("MAct", emu::cmd::macroAction((quint16)slot, 0));
 }
 
 void MainWindow::onMacroUpdate()
 {
     auto* sel = m_macroList->currentItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
-    m_state.macros[slot].name        = m_macroNameEdit->text().trimmed();
-    m_state.macros[slot].description = m_macroDescEdit->toPlainText().trimmed();
-    m_state.macros[slot].isUsed      = true;
-    m_server.broadcastMPrp(slot);
+    QString name = m_macroNameEdit->text().trimmed();
+    QString desc = m_macroDescEdit->toPlainText().trimmed();
+    if (m_device.macro(slot).used) {
+        apply("CMPr", emu::cmd::macroProperties((quint16)slot, name, desc));
+    } else {
+        emu::Macro mac;
+        mac.used = true; mac.name = name; mac.description = desc;
+        m_device.setMacro(slot, mac);
+    }
     saveMacros();
     syncMacroList();
-    for (int i = 0; i < m_macroList->count(); ++i)
-        if (m_macroList->item(i)->data(Qt::UserRole).toInt() == slot)
-            { m_macroList->setCurrentRow(i); break; }
-    uiLog(QString("Macro %1 updated: \"%2\"").arg(slot+1).arg(m_state.macros[slot].name));
+    uiLog(QString("Macro %1 updated: \"%2\"").arg(slot+1).arg(name));
 }
 
+// Stores the current picture as a macro: program, PiP source, DVE settings
+// and PiP on/off, as switcher commands (so it runs anywhere the switcher's
+// macros run), plus the camera pictures for this emulator.
 void MainWindow::onMacroSaveOutput()
 {
+    using namespace emu::cmd;
     auto* sel = m_macroList->currentItem();
     if (!sel) { uiLog("Save Output: no macro selected"); return; }
     int slot = sel->data(Qt::UserRole).toInt();
+    emu::SwitcherView v = m_device.view();
 
-    QVector<Atem::MacroAction> acts;
-    acts.append({ Atem::MacroActionType::SwitchProgram, (int)m_state.programSource });
-    acts.append({ Atem::MacroActionType::KeyerEnable,   m_state.keyerOn ? 1 : 0 });
-    m_state.macros[slot].actions = acts;
-
-    Atem::MacroSnapshot snap;
-    snap.captured = true; snap.programSource = m_state.programSource;
-    snap.dve = m_state.dve;
-    snap.lockSize = m_lockSize ? m_lockSize->isChecked() : true;
-    for (int i = 0; i < 4; ++i) {
-        if (m_useVideo[i])       snap.inputs[i] = { Atem::InputMode::Video, 0, m_videoSources[i]->filePath() };
-        else if (m_usePhoto[i])  snap.inputs[i] = { Atem::InputMode::Photo, 0, m_photoSources[i]->path() };
-        else                     snap.inputs[i] = { Atem::InputMode::SolidColor, m_sources[i]->color().rgba(), {} };
+    emu::Macro mac = m_device.macro(slot);
+    if (!mac.used) {
+        mac.name = m_macroNameEdit->text().trimmed();
+        mac.description = m_macroDescEdit->toPlainText().trimmed();
     }
-    m_state.macros[slot].snapshot = snap;
-    m_state.macros[slot].isUsed   = true;
-    m_server.broadcastMPrp(slot);
+    if (mac.name.isEmpty()) mac.name = QString("Macro %1").arg(slot + 1);
+    mac.used = true;
+    mac.ops.clear();
+    auto op = [&](const char* name, const QByteArray& data) { mac.ops.append({emu::MacroOp::Command, name, data, 0}); };
+    op("CPgI", programInput(0, v.program));
+    op("CKTp", keyType(0, 0, v.keyType));
+    op("CKeF", keyFill(0, 0, v.keyFill));
+    DveParams p;
+    p.sizeX = v.sizeX; p.sizeY = v.sizeY; p.positionX = v.positionX; p.positionY = v.positionY;
+    p.border = v.borderEnabled; p.borderWidth = v.borderWidth; p.borderOpacity = v.borderOpacity;
+    p.borderHue = v.borderHue; p.borderSaturation = v.borderSaturation; p.borderLuma = v.borderLuma;
+    p.masked = v.masked; p.maskTop = v.maskTop; p.maskBottom = v.maskBottom;
+    p.maskLeft = v.maskLeft; p.maskRight = v.maskRight;
+    op("CKDV", dve(0, 0, SizeX | SizeY | PositionX | PositionY | Border | BorderWidth | BorderOpacity |
+                         BorderHue | BorderSaturation | BorderLuma | Masked | MaskTop | MaskBottom |
+                         MaskLeft | MaskRight, p));
+    op("CKOn", keyOnAir(0, 0, v.keyOnAir));
+    m_device.setMacro(slot, mac);
+
+    MacroExtras& x = m_macroExtras[slot];
+    x.captured = true;
+    x.lockSize = m_lockSize ? m_lockSize->isChecked() : true;
+    x.rotation = m_rotation;
+    x.opacity  = m_opacity;
+    for (int i = 0; i < 4; ++i) {
+        if (m_useVideo[i])       x.inputs[i] = { Atem::InputMode::Video, 0, m_videoSources[i]->filePath() };
+        else if (m_usePhoto[i])  x.inputs[i] = { Atem::InputMode::Photo, 0, m_photoSources[i]->path() };
+        else                     x.inputs[i] = { Atem::InputMode::SolidColor, m_sources[i]->color().rgba(), {} };
+    }
     saveMacros();
 
-    QImage frame = m_compositor.compose(
-        sourceForId(m_state.programSource)->currentFrame(),
-        sourceForId(m_state.dve.fillSrc)->currentFrame(), m_state.dve);
+    QImage frame = m_compositor.compose(sourceForId(v.program)->currentFrame(),
+                                        sourceForId(v.keyFill)->currentFrame(), pipState(v));
     frame.scaled(320,180, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
          .save(macroThumbPath(slot), "JPEG", 80);
 
     syncMacroList();
-    for (int i = 0; i < m_macroList->count(); ++i)
-        if (m_macroList->item(i)->data(Qt::UserRole).toInt() == slot)
-            { m_macroList->setCurrentRow(i); break; }
     updateSnapshotDisplay(slot);
-
-    const char* pgmName = "?";
-    for (int i = 0; i < kN; ++i)
-        if (kSrc[i].id == m_state.programSource) { pgmName = kSrc[i].full; break; }
     uiLog(QString("Macro \"%1\" saved: PGM=%2, PiP=%3")
-          .arg(m_state.macros[slot].name).arg(pgmName)
-          .arg(m_state.keyerOn ? "On" : "Off"));
+          .arg(mac.name).arg(sourceName(v.program))
+          .arg(v.keyOnAir ? "On" : "Off"));
 
-    m_macroStatus->setText("\u2713 Saved");
+    m_macroStatus->setText("✓ Saved");
     m_macroStatus->setStyleSheet("color:#44bb44;font-weight:700;font-size:10px;"
                                  "letter-spacing:1px;background:transparent;border:0;");
-    QTimer::singleShot(2000, this, [this]{
-        m_macroStatus->setText("IDLE");
-        m_macroStatus->setStyleSheet("color:#333;font-weight:700;font-size:10px;"
-                                     "letter-spacing:1px;background:transparent;border:0;");
-    });
+    QTimer::singleShot(2000, this, [this]{ updateMacroStatus(); });
 }
 
 void MainWindow::onMacroSelectionChanged()
 {
     auto* sel = m_macroList->currentItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
-    m_macroNameEdit->setText(m_state.macros[slot].name);
-    m_macroDescEdit->setPlainText(m_state.macros[slot].description);
+    m_macroNameEdit->setText(m_device.macro(slot).name);
+    m_macroDescEdit->setPlainText(m_device.macro(slot).description);
     updateSnapshotDisplay(slot);
 }
 
-void MainWindow::applyMacroSnapshot(int slot)
+// Camera pictures, size lock, rotation and opacity saved with a macro are
+// applied when the macro runs (from here or from any client).
+void MainWindow::applyMacroExtras(int slot)
 {
-    const auto& snap = m_state.macros[slot].snapshot;
-    if (!snap.captured) return;
-    setProgramSource(snap.programSource);
-    m_state.dve = snap.dve; m_state.keyerOn = snap.dve.enabled;
-    if (m_lockSize) m_lockSize->setChecked(snap.lockSize);
-    syncKeyerUi(); m_server.broadcastKeOn(); m_server.broadcastKeDV();
+    if (slot < 0 || slot >= m_macroExtras.size()) return;
+    const MacroExtras& x = m_macroExtras[slot];
+    if (!x.captured) return;
+    if (m_lockSize) m_lockSize->setChecked(x.lockSize);
+    m_rotation = x.rotation;
+    m_opacity = x.opacity;
     for (int i = 0; i < 4; ++i) {
-        const auto& inp = snap.inputs[i];
+        const auto& inp = x.inputs[i];
         if (inp.mode == Atem::InputMode::SolidColor) {
             m_sources[i]->setColor(QColor::fromRgba(inp.argb));
             m_useVideo[i] = false; m_usePhoto[i] = false;
@@ -1168,72 +1323,115 @@ void MainWindow::applyMacroSnapshot(int slot)
             if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(QFileInfo(inp.path).fileName().left(8));
         }
     }
-    uiLog(QString("Macro %1 loaded: \"%2\"").arg(slot+1).arg(m_state.macros[slot].name));
+    syncKeyerUi();
+}
+
+// Human-readable steps of a macro.
+QString MainWindow::describeMacro(int slot) const
+{
+    const emu::Macro& mac = m_device.macro(slot);
+    if (!mac.used) return "(empty slot)";
+    static const char* keyTypes[] = { "luma", "chroma", "pattern", "DVE" };
+    QStringList lines;
+    for (const emu::MacroOp& op : mac.ops) {
+        const QByteArray& d = op.data;
+        switch (op.kind) {
+        case emu::MacroOp::Wait:     lines << QString("Wait %1 frames").arg(op.frames); continue;
+        case emu::MacroOp::UserWait: lines << "Wait for user"; continue;
+        case emu::MacroOp::Patch:    lines << QString("Set %1 (recorded)").arg(QString::fromLatin1(op.name)); continue;
+        case emu::MacroOp::Command:  break;
+        }
+        if (op.name == "CPgI")      lines << "Program → " + sourceName(emu::u16(d, 2));
+        else if (op.name == "CPvI") lines << "Preview → " + sourceName(emu::u16(d, 2));
+        else if (op.name == "CKeF") lines << "PiP source → " + sourceName(emu::u16(d, 2));
+        else if (op.name == "CKOn") lines << QString("PiP %1").arg(emu::u8(d, 2) ? "on" : "off");
+        else if (op.name == "CKTp") lines << QString("Key type → %1").arg(keyTypes[qMin<int>(emu::u8(d, 3), 3)]);
+        else if (op.name == "DCut") lines << "Cut";
+        else if (op.name == "DAut") lines << "Auto transition";
+        else if (op.name == "FtbA") lines << "Fade to black";
+        else if (op.name == "CKDV") {
+            quint32 mask = emu::u32(d, 0);
+            QStringList parts;
+            if (mask & (emu::cmd::SizeX | emu::cmd::SizeY))
+                parts << QString("size %1%").arg(qRound(emu::i32(d, 8) / 10.0));
+            if (mask & (emu::cmd::PositionX | emu::cmd::PositionY))
+                parts << QString("pos %1, %2").arg(emu::i32(d, 16) / 1000.0).arg(emu::i32(d, 20) / 1000.0);
+            if (mask & emu::cmd::Masked) parts << QString("crop %1").arg(emu::u8(d, 51) ? "on" : "off");
+            if (mask & emu::cmd::Border) parts << QString("border %1").arg(emu::u8(d, 28) ? "on" : "off");
+            lines << "PiP " + (parts.isEmpty() ? QString("settings") : parts.join(", "));
+        }
+        else lines << QString::fromLatin1(op.name);
+    }
+    if (slot < m_macroExtras.size() && m_macroExtras[slot].captured) {
+        const MacroExtras& x = m_macroExtras[slot];
+        lines << "─────────────";
+        for (int i = 0; i < 4; ++i) {
+            const auto& inp = x.inputs[i];
+            QString val = (inp.mode == Atem::InputMode::SolidColor)
+                ? QColor::fromRgba(inp.argb).name()
+                : ((inp.mode == Atem::InputMode::Photo ? "img:" : "vid:") + QFileInfo(inp.path).fileName().left(16));
+            lines << QString("CAM%1: %2").arg(i+1).arg(val);
+        }
+    }
+    return lines.isEmpty() ? "(no steps)" : lines.join('\n');
 }
 
 void MainWindow::updateSnapshotDisplay(int slot)
 {
-    if (!m_snapshotView) return;
-    const auto& mac = m_state.macros[slot];
-    if (!mac.snapshot.captured) { m_snapshotView->setPlainText("(no saved state)"); return; }
-    const auto& s = mac.snapshot;
-    QString txt;
-    auto srcName = [&](quint16 id) -> QString {
-        for (int i = 0; i < kN; ++i) if (kSrc[i].id == id) return kSrc[i].full; return "?";
-    };
-    txt += "PGM: " + srcName(s.programSource) + "\n";
-    txt += QString("PiP: %1").arg(s.dve.enabled ? "On" : "Off");
-    if (s.dve.enabled) txt += " (" + srcName(s.dve.fillSrc) + ")";
-    txt += "\n";
-    txt += QString("Size %1%  Pos %2,%3\n").arg(s.dve.sizeX/10).arg(s.dve.posX).arg(s.dve.posY);
-    txt += QString("Rot %1\xc2\xb0  Opa %2%  Bdr %3px\n").arg(s.dve.rotation/100).arg(s.dve.opacity).arg(s.dve.border);
-    txt += QString("Crop L%1 R%2 T%3 B%4\n").arg(s.dve.cropLeft).arg(s.dve.cropRight).arg(s.dve.cropTop).arg(s.dve.cropBottom);
-    txt += "─────────────\n";
-    for (int i = 0; i < 4; ++i) {
-        const auto& inp = s.inputs[i];
-        QString val = (inp.mode == Atem::InputMode::SolidColor)
-            ? QColor::fromRgba(inp.argb).name()
-            : ((inp.mode == Atem::InputMode::Photo ? "img:" : "vid:") + QFileInfo(inp.path).fileName().left(16));
-        txt += QString("CAM%1: %2\n").arg(i+1).arg(val);
-    }
-    m_snapshotView->setPlainText(txt.trimmed());
+    if (m_snapshotView) m_snapshotView->setPlainText(describeMacro(slot));
 }
 
 void MainWindow::syncMacroList()
 {
+    if (!m_macroList) return;
     int selSlot = m_macroList->currentItem()
         ? m_macroList->currentItem()->data(Qt::UserRole).toInt() : -1;
     m_macroList->clear();
-    for (int i = 0; i < m_state.macros.size(); ++i) {
-        const auto& mac = m_state.macros[i];
+    for (int i = 0; i < m_device.macroCount(); ++i) {
+        const emu::Macro& mac = m_device.macro(i);
         auto* item = new QListWidgetItem;
-        item->setData(Qt::DisplayRole, mac.name.isEmpty() ? QString("Slot %1").arg(i+1) : mac.name);
+        item->setData(Qt::DisplayRole, mac.used && !mac.name.isEmpty() ? mac.name
+                                       : mac.used ? QString("Macro %1").arg(i+1) : QString("Slot %1").arg(i+1));
         item->setData(Qt::UserRole, i);
         item->setData(Qt::UserRole+1, mac.description);
-        if (QFile::exists(macroThumbPath(i))) item->setIcon(QIcon(macroThumbPath(i)));
+        if (mac.used && QFile::exists(macroThumbPath(i))) item->setIcon(QIcon(macroThumbPath(i)));
         m_macroList->addItem(item);
     }
     for (int i = 0; i < m_macroList->count(); ++i)
         if (m_macroList->item(i)->data(Qt::UserRole).toInt() == selSlot)
             { m_macroList->setCurrentRow(i); break; }
+    if (selSlot >= 0) updateSnapshotDisplay(selSlot);
+}
+
+void MainWindow::updateMacroStatus()
+{
+    if (!m_macroStatus) return;
+    emu::SwitcherView v = m_device.view();
+    QString text = "IDLE", color = "#333";
+    if (v.macroRecording) {
+        text = QString("● REC  %1").arg(v.macroRecordingIndex + 1);
+        color = "#cc4444";
+    } else if (v.macroRunning && v.macroIndex >= 0 && v.macroIndex < m_device.macroCount()) {
+        text = QString(v.macroWaiting ? "⏸  %1" : "▶  %1").arg(m_device.macro(v.macroIndex).name);
+        color = "#44bb44";
+    }
+    if (m_macroStatus->text() != "✓ Saved") {
+        m_macroStatus->setText(text);
+        m_macroStatus->setStyleSheet(QString("color:%1;font-weight:700;font-size:10px;"
+                                             "letter-spacing:1px;background:transparent;border:0;").arg(color));
+    }
+    if (m_macroRunBtn) m_macroRunBtn->setText(v.macroRunning ? "■ Stop" : "▶ Play");
 }
 
 void MainWindow::onMacroStarted(int index)
 {
-    m_state.macroRun = { true, false, (quint16)index };
-    m_server.broadcastMRPr();
-    m_macroStatus->setText(QString("\u25b6  %1").arg(m_state.macros[index].name));
-    m_macroStatus->setStyleSheet("color:#44bb44;font-weight:700;font-size:10px;"
-                                 "letter-spacing:1px;background:transparent;border:0;");
+    applyMacroExtras(index);
+    updateMacroStatus();
 }
 
 void MainWindow::onMacroFinished(int)
 {
-    m_state.macroRun = {};
-    m_server.broadcastMRPr();
-    m_macroStatus->setText("IDLE");
-    m_macroStatus->setStyleSheet("color:#333;font-weight:700;font-size:10px;"
-                                 "letter-spacing:1px;background:transparent;border:0;");
+    updateMacroStatus();
 }
 
 // ── Preview & thumbnails ──────────────────────────────────────────────────────
@@ -1248,51 +1446,59 @@ void MainWindow::updateSourceThumbs()
     }
 }
 
+// The PiP as the switcher has it: upstream key 1 on air as a DVE key.
+Atem::KeDVState MainWindow::pipState(const emu::SwitcherView& v) const
+{
+    Atem::KeDVState d;
+    d.enabled = v.keyOnAir && v.keyType == 3;
+    d.fillSrc = v.keyFill;
+    d.posX = (qint32)std::lround(v.positionX * 1000);
+    d.posY = (qint32)std::lround(v.positionY * 1000);
+    d.sizeX = (quint32)std::lround(qMax(0.0, v.sizeX) * 1000);
+    d.sizeY = (quint32)std::lround(qMax(0.0, v.sizeY) * 1000);
+    if (v.masked) {
+        d.cropTop    = (quint32)std::lround(v.maskTop * 1000);
+        d.cropBottom = (quint32)std::lround(v.maskBottom * 1000);
+        d.cropLeft   = (quint32)std::lround(v.maskLeft * 1000);
+        d.cropRight  = (quint32)std::lround(v.maskRight * 1000);
+    }
+    d.border = v.borderEnabled ? (quint32)std::lround(v.borderWidth * 3.125) : 0;
+    d.borderArgb = hslColor(v.borderHue, v.borderSaturation, v.borderLuma, v.borderOpacity).rgba();
+    d.rotation = m_rotation * 100;
+    d.opacity = (quint32)m_opacity;
+    return d;
+}
+
 void MainWindow::onRefreshPreview()
 {
-    QImage frame = m_compositor.compose(
-        sourceForId(m_state.programSource)->currentFrame(),
-        sourceForId(m_state.dve.fillSrc)->currentFrame(),
-        m_state.dve);
+    if (!m_ready) return;
+    emu::SwitcherView v = m_device.view();
+
+    // Program, mixed towards preview while a transition runs.
+    QImage pgm = sourceForId(v.program)->currentFrame().convertToFormat(QImage::Format_RGB32);
+    if (v.inTransition && v.transitionPosition > 0) {
+        QPainter p(&pgm);
+        p.setOpacity(v.transitionPosition);
+        p.drawImage(pgm.rect(), sourceForId(v.preview)->currentFrame());
+    }
+    QImage frame = m_compositor.compose(pgm, sourceForId(v.keyFill)->currentFrame(), pipState(v));
+
+    // Fade to black.
+    double black = 0;
+    if (v.fadeFullyBlack) black = 1;
+    else if (v.fadeInTransition && v.fadeRate > 0) {
+        double remaining = qBound(0.0, double(v.fadeFramesRemaining) / v.fadeRate, 1.0);
+        black = m_fadeFromBlack ? remaining : 1 - remaining;
+    }
+    if (black > 0) {
+        QPainter p(&frame);
+        p.fillRect(frame.rect(), QColor(0, 0, 0, qRound(black * 255)));
+    }
+
     m_preview->setFrame(frame);
     if (m_webcamActive) pushWebcamFrame(frame);
     updateSourceThumbs();
 }
-
-// ── Remote commands ───────────────────────────────────────────────────────────
-
-void MainWindow::onMacroActionApply(const Atem::MacroAction& a)
-{
-    using T = Atem::MacroActionType;
-    switch (a.type) {
-    case T::SwitchProgram: setProgramSource((quint16)a.param); break;
-    case T::KeyerEnable:
-        m_state.keyerOn = (a.param != 0); m_state.dve.enabled = m_state.keyerOn;
-        syncKeyerUi(); m_server.broadcastKeOn(); m_server.broadcastKeDV(); break;
-    default: break;
-    }
-}
-
-void MainWindow::onCmdProgramInput(quint16 s) { uiLog(QString("Remote PGM \u2192 src %1").arg(s)); setProgramSource(s); }
-void MainWindow::onCmdCut() {}
-
-void MainWindow::onCmdKeyerOn(bool on)
-{
-    uiLog(QString("Remote PiP: %1").arg(on ? "On" : "Off"));
-    m_state.keyerOn = on; m_state.dve.enabled = on;
-    syncKeyerUi(); m_server.broadcastKeOn(); m_server.broadcastKeDV();
-}
-
-void MainWindow::onCmdKeyerDVE(quint16 fs, quint32 sx, quint32 sy, qint32 px, qint32 py)
-{
-    uiLog("Remote DVE update");
-    m_state.dve.fillSrc = fs; m_state.dve.sizeX = sx; m_state.dve.sizeY = sy;
-    m_state.dve.posX = px; m_state.dve.posY = py;
-    syncKeyerUi(); m_server.broadcastKeDV();
-}
-
-void MainWindow::onCmdMacroRun(quint16 i) { uiLog(QString("Remote macro run: slot %1").arg(i)); m_macroEngine.runMacro(i); }
-void MainWindow::onCmdMacroStop() { m_macroEngine.stopMacro(); }
 
 // ── Network binding ───────────────────────────────────────────────────────────
 
@@ -1300,19 +1506,21 @@ void MainWindow::onNetworkToggle(bool on)
 {
     if (on == m_netActive) return;
     if (on) {
-        m_netActive = m_server.start();
+        QString error;
+        m_netActive = m_server.listen(QHostAddress(m_options.listenAddress), 9910, &error);
         if (m_netActive) {
-            m_statusLabel->setText(
-                QString("  Listening  \u00b7  UDP 0.0.0.0:%1").arg(Atem::ATEM_PORT));
+            m_statusLabel->setText(QString("  Listening  ·  UDP %1:9910").arg(m_options.listenAddress));
             m_statusLabel->setStyleSheet("color:#333;font-size:10px;");
             uiLog("Network binding started");
         } else {
-            uiLog("Network: failed to bind UDP port 9910");
+            m_statusLabel->setText("  ✗  UDP port 9910 in use — close other instances");
+            m_statusLabel->setStyleSheet("color:#cc4444;font-size:10px;");
+            uiLog("Network: failed to bind UDP port 9910: " + error);
         }
     } else {
-        m_server.stop();
+        m_server.close();
         m_netActive = false;
-        m_statusLabel->setText("  Network  \u00b7  OFF");
+        m_statusLabel->setText("  Network  ·  OFF");
         m_statusLabel->setStyleSheet("color:#555;font-size:10px;");
         uiLog("Network binding stopped");
     }
@@ -1321,20 +1529,17 @@ void MainWindow::onNetworkToggle(bool on)
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
-void MainWindow::onClientConnected(int n)
-{
-    m_statusLabel->setText(QString("  \u25cf  %1 client%2  \u00b7  UDP 0.0.0.0:%3")
-        .arg(n).arg(n!=1?"s":"").arg(Atem::ATEM_PORT));
-    m_statusLabel->setStyleSheet("color:#338833;font-size:10px;");
-    uiLog(QString("Client connected (total: %1)").arg(n));
-}
-
-void MainWindow::onClientDisconnected(int n)
+void MainWindow::onClientCount(int n)
 {
     if (n == 0) {
-        m_statusLabel->setText(QString("  No clients  \u00b7  UDP 0.0.0.0:%1").arg(Atem::ATEM_PORT));
+        m_statusLabel->setText(QString("  No clients  ·  UDP %1:9910").arg(m_options.listenAddress));
         m_statusLabel->setStyleSheet("color:#333;font-size:10px;");
-    } else { onClientConnected(n); }
+    } else {
+        m_statusLabel->setText(QString("  ●  %1 client%2  ·  UDP %3:9910")
+            .arg(n).arg(n!=1?"s":"").arg(m_options.listenAddress));
+        m_statusLabel->setStyleSheet("color:#338833;font-size:10px;");
+    }
+    uiLog(QString("Clients connected: %1").arg(n));
 }
 
 void MainWindow::onLogMessage(const QString& msg)
@@ -1360,11 +1565,15 @@ InputSource* MainWindow::sourceForId(quint16 id) const
     }
     static BarsSource    bars;
     static SolidColorSource blk(Qt::black);
+    if (id == Atem::SRC_COLOR1 || id == Atem::SRC_COLOR2) {   // the switcher's colour generators
+        static SolidColorSource colors[2];
+        int i = id - Atem::SRC_COLOR1;
+        double h, s, l;
+        if (m_device.colorGenerator(i + 1, &h, &s, &l)) {
+            QColor col = hslColor(h, s, l);
+            if (colors[i].color() != col) colors[i].setColor(col);
+        }
+        return &colors[i];
+    }
     return (id == Atem::SRC_BARS) ? (InputSource*)&bars : (InputSource*)&blk;
-}
-
-int MainWindow::sourceIdToComboIndex(quint16 id) const
-{
-    for (int i = 0; i < kN; ++i) if (kSrc[i].id == id) return i;
-    return 1;
 }

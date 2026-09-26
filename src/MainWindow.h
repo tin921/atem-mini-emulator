@@ -1,11 +1,12 @@
 #pragma once
 #include "AtemState.h"
-#include "AtemServer.h"
 #include "InputSource.h"
 #include "Compositor.h"
-#include "MacroEngine.h"
 #include "PreviewWidget.h"
 #include "SourceButton.h"
+#include "commands.h"
+#include "device.h"
+#include "server.h"
 #include <QMainWindow>
 #include <QLabel>
 #include <QSpinBox>
@@ -18,12 +19,22 @@
 #include <QBuffer>
 #include <QCloseEvent>
 
+struct EmulatorOptions {
+    QString profileDir;                  // recorded switcher (dump.txt, macros.txt)
+    QString listenAddress = "0.0.0.0";
+    // Reference mode: the profile's state and macros only, nothing saved or
+    // loaded — for checking the emulator with atem-sweep.
+    bool reference = false;
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(const EmulatorOptions& options, QWidget* parent = nullptr);
     ~MainWindow() override;
+
+    bool isReady() const { return m_ready; }
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -38,21 +49,14 @@ private slots:
     void onMacroUpdate();
     void onMacroSaveOutput();
     void onMacroSelectionChanged();
-    void onCmdProgramInput(quint16 src);
-    void onCmdCut();
-    void onCmdKeyerOn(bool on);
-    void onCmdKeyerDVE(quint16 fillSrc, quint32 sX, quint32 sY, qint32 pX, qint32 pY);
-    void onCmdMacroRun(quint16 index);
-    void onCmdMacroStop();
-    void onMacroActionApply(const Atem::MacroAction& action);
     void onMacroStarted(int index);
     void onMacroFinished(int index);
     void onRefreshPreview();
-    void onClientConnected(int total);
-    void onClientDisconnected(int total);
+    void onClientCount(int total);
     void onLogMessage(const QString& msg);
     void onWebcamToggle();
     void onNetworkToggle(bool on);
+    void syncFromDevice();
 
 private:
     void buildUi();
@@ -66,30 +70,56 @@ private:
 
     void uiLog(const QString& msg);
     void saveMacros();
-    bool loadMacros();   // returns true if file existed and was loaded
+    bool loadMacros();   // returns true if a saved macro pool was loaded
     static QString macroDataPath();
     void setProgramSource(quint16 src);
     void syncProgramButtons();
     void syncKeyerUi();
     void syncMacroList();
+    void updateMacroStatus();
     void updateBorderColorBtn();
     void updateColorBtnStyle(int i);
     void updateSourceThumbs();
     void updateSnapshotDisplay(int slot);
-    void applyMacroSnapshot(int slot);
+    void applyMacroExtras(int slot);
     void pushWebcamFrame(const QImage& img);
     void updateVCamButtons();
     void updateNetButtons();
     static QString macroThumbPath(int slot);
 
-    InputSource* sourceForId(quint16 id) const;
-    int sourceIdToComboIndex(quint16 id) const;
+    // Commands to the switcher (the same handlers the SDK's commands use)
+    void apply(const char* command, const QByteArray& data);
+    void sendDve(quint32 mask, const emu::cmd::DveParams& p);
+    void sendSize(int percentX, int percentY);
+    void sendCrop();
+    Atem::KeDVState pipState(const emu::SwitcherView& v) const;
+    QString sourceName(quint16 id) const;
+    QString describeMacro(int slot) const;
 
-    // ── State ────────────────────────────────────────────────────────
-    Atem::ATEMState  m_state;
-    Atem::AtemServer m_server;
-    MacroEngine      m_macroEngine;
+    InputSource* sourceForId(quint16 id) const;
+
+    // ── Switcher ─────────────────────────────────────────────────────
+    EmulatorOptions  m_options;
+    emu::Device      m_device;
+    emu::Server      m_server;
     Compositor       m_compositor;
+    bool             m_ready = false;
+    QTimer           m_syncTimer;          // coalesces state changes into one UI refresh
+    bool             m_fadeFromBlack = false;
+    QTimer           m_saveTimer;          // saves the macro pool shortly after a change
+
+    // Emulator-only picture settings and the per-macro extras the ATEM has
+    // no place for (camera pictures, size lock, rotation, opacity).
+    int m_rotation = 0;
+    int m_opacity  = 100;
+    struct MacroExtras {
+        bool captured = false;
+        bool lockSize = true;
+        int  rotation = 0;
+        int  opacity  = 100;
+        Atem::InputSnap inputs[4];
+    };
+    QVector<MacroExtras> m_macroExtras;
 
     SolidColorSource*  m_sources[4]      = {};
     VideoFileSource*   m_videoSources[4] = {};
@@ -124,6 +154,7 @@ private:
     QTextEdit*   m_macroDescEdit = nullptr;
     QTextEdit*   m_snapshotView  = nullptr;
     QLabel*      m_macroStatus   = nullptr;
+    QPushButton* m_macroRunBtn   = nullptr;
 
     // ── Virtual camera (DirectShow, shared memory) ────────────────────
     void*        m_vcamSharedMem  = nullptr;

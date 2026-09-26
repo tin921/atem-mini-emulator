@@ -14,6 +14,7 @@ endif()
 # The emulator core: no UI, so the headless tool and a GUI can share it.
 add_library(atem-emu-core STATIC
     src/fields.h src/fields.cpp
+    src/commands.h src/commands.cpp
     src/device.h src/device.cpp
     src/server.h src/server.cpp
 )
