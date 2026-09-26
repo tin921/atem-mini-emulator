@@ -1,0 +1,14 @@
+# SDK calls atem-sweep deliberately never makes (safety policy: it reads,
+# changes settings and puts them back, runs/stops macros — it never deletes,
+# overwrites stored media, records or streams).
+# Interface::Method<TAB>reason
+IBMDSwitcherStills::Upload	overwrites a still in the media pool
+IBMDSwitcherClip::UploadFrame	overwrites clip frames in the media pool
+IBMDSwitcherClip::SetValid	writes clip metadata into the media pool
+IBMDSwitcherClip::SetInvalid	deletes a clip from the media pool
+IBMDSwitcherRecordAV::StartRecording	starts recording
+IBMDSwitcherRecordAV::StopRecording	stops a recording (only meaningful after starting one)
+IBMDSwitcherRecordAV::SwitchDisk	switches the recording disk mid-recording
+IBMDSwitcherStreamRTMP::StartStreaming	goes live on the internet
+IBMDSwitcherStreamRTMP::StopStreaming	stops a live stream (only meaningful after starting one)
+IBMDSwitcherCameraControl::SetFlags	camera action (instant autofocus) on a Blackmagic camera; runs with --allow-camera

@@ -1,0 +1,3 @@
+Tier 1 (obs-atem plugin): 67/67 accounted for — 67 called, 0 not on this model, 0 excluded by policy
+Tier 2 (SDK samples): 147/147 accounted for — 81 called, 64 not on this model, 2 excluded by policy
+SDK methods called in total: 252; interfaces not on this model: IBMDSwitcherAudioInput, IBMDSwitcherAudioInputIterator, IBMDSwitcherAudioMixer, IBMDSwitcherClip, IBMDSwitcherRecordAV, IBMDSwitcherRecordDisk, IBMDSwitcherRecordDiskIterator, IBMDSwitcherStreamRTMP

@@ -1,0 +1,150 @@
+# Tier 2 - every SDK call made by the BMD SDK 10.2.1 Windows samples. Must be 100% covered.
+# Interface::Method<TAB>where it is used
+# (Removed by review: IBMDSwitcherCameraControl::GetString — TGALoader.cpp calls MFC CString::GetString.)
+IBMDSwitcher::AddCallback	CallbackMonitors.cpp, SwitcherPanel.cs, SwitcherPanelDlg.cpp, SwitcherRecordAVDevice.cs, SwitcherStreamDevice.cs
+IBMDSwitcher::CreateIterator	Program.cs, SwitcherMediaPoolDlg.cpp, SwitcherPanel.cs, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcher::DoesSupportVideoMode	main.cpp
+IBMDSwitcher::GetDownConvertedHDVideoMode	main.cpp
+IBMDSwitcher::GetMultiViewVideoMode	main.cpp
+IBMDSwitcher::GetPowerStatus	main.cpp
+IBMDSwitcher::GetProductName	SwitcherMediaPoolDlg.cpp, SwitcherPanel.cs, SwitcherPanelDlg.cpp, SwitcherRecordAVDevice.cs, SwitcherStreamDevice.cs, main.cpp
+IBMDSwitcher::GetTimeCode	SwitcherRecordAVDevice.cs, SwitcherStreamDevice.cs
+IBMDSwitcher::GetVideoMode	MediaPoolTransfer.cpp, main.cpp
+IBMDSwitcher::RemoveCallback	CallbackMonitors.cpp, SwitcherPanel.cs, SwitcherPanelDlg.cpp, SwitcherRecordAVDevice.cs, SwitcherStreamDevice.cs
+IBMDSwitcherAudioInput::GetAudioInputId	main.cpp
+IBMDSwitcherAudioInput::GetCurrentExternalPortType	main.cpp
+IBMDSwitcherAudioInput::GetType	main.cpp
+IBMDSwitcherAudioInputIterator::Next	main.cpp
+IBMDSwitcherAudioMixer::CreateIterator	main.cpp
+IBMDSwitcherCameraControl::OffsetFloats	CameraFocus.cpp
+IBMDSwitcherCameraControl::SetFlags	CameraFocus.cpp
+IBMDSwitcherCameraControl::SetFloats	CameraFocus.cpp
+IBMDSwitcherClip::AddCallback	CallbackMonitors.cpp
+IBMDSwitcherClip::CancelTransfer	MediaPoolTransfer.cpp
+IBMDSwitcherClip::GetFrameCount	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherClip::GetIndex	CallbackMonitors.cpp, MediaPoolTransfer.cpp, main.cpp
+IBMDSwitcherClip::GetName	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherClip::IsValid	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherClip::Lock	MediaPoolTransfer.cpp
+IBMDSwitcherClip::RemoveCallback	CallbackMonitors.cpp
+IBMDSwitcherClip::SetInvalid	MediaPoolTransfer.cpp
+IBMDSwitcherClip::SetValid	MediaPoolTransfer.cpp
+IBMDSwitcherClip::Unlock	MediaPoolTransfer.cpp
+IBMDSwitcherClip::UploadFrame	MediaPoolTransfer.cpp
+IBMDSwitcherDiscovery::ConnectTo	CameraFocus.cpp, Program.cs, SwitcherMediaPoolDlg.cpp, SwitcherPanel.cs, SwitcherPanelDlg.cpp, SwitcherRecordAVDevice.cs, SwitcherStreamDevice.cs, main.cpp
+IBMDSwitcherDownstreamKeyIterator::Next	main.cpp
+IBMDSwitcherFairlightAudioInput::GetCurrentExternalPortType	main.cpp
+IBMDSwitcherFairlightAudioInput::GetId	main.cpp
+IBMDSwitcherFairlightAudioInput::GetType	main.cpp
+IBMDSwitcherFairlightAudioInputIterator::Next	main.cpp
+IBMDSwitcherFairlightAudioMixer::CreateIterator	main.cpp
+IBMDSwitcherFrame::GetBytes	MediaPoolTransfer.cpp
+IBMDSwitcherHyperDeck::GetClipCount	main.cpp
+IBMDSwitcherHyperDeck::GetConnectionStatus	main.cpp
+IBMDSwitcherHyperDeck::GetModelName	main.cpp
+IBMDSwitcherHyperDeck::GetNetworkAddress	main.cpp
+IBMDSwitcherHyperDeckIterator::Next	main.cpp
+IBMDSwitcherInput::AddCallback	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherInput::GetCurrentExternalPortType	main.cpp
+IBMDSwitcherInput::GetInputAvailability	main.cpp
+IBMDSwitcherInput::GetInputId	Program.cs, SwitcherPanel.cs, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcherInput::GetLongName	SwitcherPanel.cs, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcherInput::GetPortType	Program.cs, main.cpp
+IBMDSwitcherInput::GetShortName	main.cpp
+IBMDSwitcherInput::RemoveCallback	SwitcherPanelDlg.cpp
+IBMDSwitcherInputIterator::Next	Program.cs, SwitcherPanel.cs, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcherKey::DoesSupportAdvancedChroma	main.cpp
+IBMDSwitcherKeyIterator::Next	main.cpp
+IBMDSwitcherMacroControl::Run	Program.cs
+IBMDSwitcherMediaPlayer::AddCallback	CallbackMonitors.cpp
+IBMDSwitcherMediaPlayer::GetAtBeginning	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::GetClipFrame	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::GetLoop	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::GetPlaying	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::GetSource	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::RemoveCallback	CallbackMonitors.cpp
+IBMDSwitcherMediaPlayer::SetAtBeginning	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::SetClipFrame	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::SetLoop	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::SetPlaying	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayer::SetSource	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPlayerIterator::Next	SwitcherMediaPoolDlg.cpp
+IBMDSwitcherMediaPool::CreateFrame	MediaPoolTransfer.cpp
+IBMDSwitcherMediaPool::GetClip	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherMediaPool::GetClipCount	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherMediaPool::GetStills	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherMixEffectBlock::AddCallback	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::CreateIterator	main.cpp
+IBMDSwitcherMixEffectBlock::GetFadeToBlackFramesRemaining	SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::GetInTransition	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::GetPreviewInput	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::GetProgramInput	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::GetTransitionFramesRemaining	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::GetTransitionPosition	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::PerformAutoTransition	Program.cs, SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::PerformCut	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::PerformFadeToBlack	SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::RemoveCallback	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::SetPreviewInput	Program.cs, SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::SetProgramInput	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlock::SetTransitionPosition	SwitcherPanel.cs, SwitcherPanelDlg.cpp
+IBMDSwitcherMixEffectBlockIterator::Next	Program.cs, SwitcherPanel.cs, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcherRecordAV::AddCallback	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::CreateIterator	SwitcherRecordAVDevice.cs, main.cpp
+IBMDSwitcherRecordAV::DoesSupportISORecording	SwitcherRecordAVDevice.cs, main.cpp
+IBMDSwitcherRecordAV::GetActiveDiskIndex	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetFilename	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetRecordAllISOInputs	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetRecordInAllCameras	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetStatus	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetTotalRecordingTimeAvailable	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::GetWorkingSetDisk	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::IsRecording	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::RemoveCallback	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::RequestDuration	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::SetFilename	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::SetRecordAllISOInputs	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::SetRecordInAllCameras	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::SetWorkingSetDisk	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::StartRecording	MainWindow.xaml.cs, SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::StopRecording	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordAV::SwitchDisk	MainWindow.xaml.cs, SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDisk::AddCallback	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDisk::GetId	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDisk::GetRecordingTimeAvailable	SwitcherRecordAVDevice.cs, main.cpp
+IBMDSwitcherRecordDisk::GetStatus	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDisk::GetVolumeName	SwitcherRecordAVDevice.cs, main.cpp
+IBMDSwitcherRecordDisk::RemoveCallback	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDiskIterator::GetById	SwitcherRecordAVDevice.cs
+IBMDSwitcherRecordDiskIterator::Next	SwitcherRecordAVDevice.cs, main.cpp
+IBMDSwitcherStills::AddCallback	CallbackMonitors.cpp
+IBMDSwitcherStills::GetCount	SwitcherMediaPoolDlg.cpp, SwitcherPanelDlg.cpp, main.cpp
+IBMDSwitcherStills::GetName	SwitcherMediaPoolDlg.cpp, main.cpp
+IBMDSwitcherStills::IsValid	main.cpp
+IBMDSwitcherStills::Lock	MediaPoolTransfer.cpp
+IBMDSwitcherStills::RemoveCallback	CallbackMonitors.cpp
+IBMDSwitcherStills::Unlock	MediaPoolTransfer.cpp
+IBMDSwitcherStills::Upload	MediaPoolTransfer.cpp
+IBMDSwitcherStreamRTMP::AddCallback	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetCacheUsed	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetEncodingBitrate	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetKey	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetLowLatency	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetServiceName	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetStatus	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetUrl	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::GetVideoBitrates	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::IsStreaming	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::RemoveCallback	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::RequestDuration	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::SetKey	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::SetLowLatency	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::SetServiceName	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::SetUrl	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::SetVideoBitrates	SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::StartStreaming	MainWindow.xaml.cs, SwitcherStreamDevice.cs
+IBMDSwitcherStreamRTMP::StopStreaming	MainWindow.xaml.cs, SwitcherStreamDevice.cs
+IBMDSwitcherTransitionParameters::SetNextTransitionSelection	Program.cs
+IBMDSwitcherTransitionParameters::SetNextTransitionStyle	Program.cs
+IBMDSwitcherTransitionWipeParameters::SetPattern	Program.cs
+IBMDSwitcherTransitionWipeParameters::SetRate	Program.cs
