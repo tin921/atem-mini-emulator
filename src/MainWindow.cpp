@@ -13,6 +13,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QFrame>
@@ -189,9 +190,12 @@ void MainWindow::saveMacros()
                 {"opacity",  x.opacity},
                 {"inputs",   inputsToJson(x.inputs)}}}});
     }
-    QFile f(macroDataPath());
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        f.write(QJsonDocument(QJsonObject{{"version", 2}, {"macros", arr}}).toJson());
+    // QSaveFile writes a temporary file and renames it over macros.json only
+    // once it is complete, so a crash or full disk never leaves a truncated file.
+    QByteArray data = QJsonDocument(QJsonObject{{"version", 2}, {"macros", arr}}).toJson();
+    QSaveFile f(macroDataPath());
+    if (!f.open(QIODevice::WriteOnly) || f.write(data) != data.size() || !f.commit())
+        uiLog("ERROR: could not save macros to " + QDir::toNativeSeparators(macroDataPath()) + ": " + f.errorString());
 }
 
 // A version-1 macro (snapshot + actions) as switcher commands.

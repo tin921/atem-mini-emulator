@@ -1,5 +1,11 @@
 # capture.exe — ATEM capture tool (BMDSwitcherAPI)
 
+> **Historical.** This page describes the tool as used with the old Python
+> simulator (`run.py`, `capture.py`), which no longer exist. Recording the
+> real switcher is now done with [atem-sweep](../sweep) — see
+> [capture.md](capture.md). `capture.exe` still works as a quick SDK-level
+> listing over USB or Ethernet.
+
 Connects to an ATEM Mini via the BMDSwitcherAPI COM SDK and dumps all
 state the SDK exposes, plus macro run/stop probes.  Supports **USB** and
 **Ethernet** — unlike `capture.py` which requires Ethernet only.

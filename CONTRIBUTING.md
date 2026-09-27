@@ -5,8 +5,8 @@ Contributions are welcome. Please read this before opening a pull request.
 ## What we want
 
 - Bug fixes with a clear reproduction case
-- Protocol accuracy improvements (backed by a real-device capture log)
-- New ATEM commands handled in `AtemServer.cpp`
+- Protocol accuracy improvements (backed by a real-device recording)
+- New ATEM commands handled in `core/src/device.cpp`
 - Virtual camera compatibility improvements
 
 ## What we don't want (right now)
@@ -18,9 +18,11 @@ Contributions are welcome. Please read this before opening a pull request.
 ## Getting started
 
 1. Fork the repository
-2. Build the project following [tech.md](tech.md)
+2. Build the project following [docs/tech.md](docs/tech.md)
 3. Make your change on a feature branch
-4. Test against ATEM Software Control and/or the `obs-atem` plugin
+4. Run the conformance check (`atem-sweep 127.0.0.2 --verify ...`, see
+   [sweep/README.md](sweep/README.md)) and test with the `obs-atem` plugin
+   and/or ATEM Software Control
 5. Open a pull request describing what changed and why
 
 ## Code style
@@ -32,9 +34,9 @@ Contributions are welcome. Please read this before opening a pull request.
 
 ## Protocol changes
 
-If your contribution changes emulator behavior, include the relevant bytes from
-a `capture.py` or `capture.exe` log in the PR description. See [train.md](train.md)
-for how to run the capture tools.
+If your contribution changes emulator behavior, include the evidence from the
+real switcher: the atem-sweep test and the recorded packets (`wire.jsonl`)
+that show it. See [docs/capture.md](docs/capture.md) for recording.
 
 ## License
 

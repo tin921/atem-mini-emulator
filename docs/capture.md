@@ -1,92 +1,74 @@
-# Protocol Training & Reverse Engineering
+# Protocol capture & reverse engineering
 
-The ATEM Mini uses an undocumented UDP protocol. This document covers how the
-emulator's protocol knowledge was obtained — through live capture from real
-hardware — and how to update it if the protocol ever changes.
-
----
-
-## Overview
-
-Blackmagic publishes the BMDSwitcherAPI COM SDK for Windows and macOS but does
-not document the underlying UDP wire protocol. To build a faithful emulator,
-the protocol was reverse-engineered by:
-
-1. Connecting a real ATEM Mini to a PC running `capture.exe`
-2. Recording the full session at the field level via the COM SDK
-3. Annotating each field against the known SDK types and interface definitions
-4. Hard-coding the initial state dump into the emulator to match exactly
+The ATEM Mini's UDP protocol is undocumented. Blackmagic publishes the
+BMDSwitcherAPI COM SDK but not the wire format underneath it, and no
+emulator. The emulator's knowledge comes from recording the real switcher.
 
 ---
 
-## Capture tool
+## How the emulator is built from the real switcher
 
-`capture.exe` (built from `tools/capture-bmd.cpp`) connects to the ATEM via
-the BMDSwitcherAPI COM SDK and records macro names, descriptions, and protocol
-run-status values. It works over USB (virtual ethernet) or direct Ethernet —
-no separate Ethernet cable required.
+1. **Record.** [atem-sweep](../sweep) drives the real ATEM through the SDK
+   (good and bad input), with a UDP proxy on `127.0.0.1:9910` recording every
+   packet both ways. Result: a golden record (`results.json`, `wire.jsonl`,
+   `coverage.txt`), see [sweep/golden](../sweep/golden).
+2. **Profile.** [core/make_profile.py](../core/make_profile.py) takes the
+   connect dump (every field the switcher sends a new client, up to `InCm`)
+   and what each stored macro changed, into
+   [core/profiles](../core/profiles).
+3. **Behaviour.** [core/src/device.cpp](../core/src/device.cpp) has one
+   handler per command, written from the recorded command/reply pairs (byte
+   layouts, checks, clamps, quirks — see [core/README.md](../core/README.md)).
+4. **Verify.** atem-sweep runs the same tests against the emulator and
+   compares with the golden record:
 
-See [tools.md](tools.md) for build and usage instructions.
+   ```powershell
+   atem-emu --listen 127.0.0.2
+   atem-sweep 127.0.0.2 --verify sweep\golden\atem-mini_sdk10.2.1_proto2.30\results.json
+   ```
+
+What verification compares: the SDK's return codes and read-backs, and which
+kinds of SDK event fired, per test (as a set, not in order), plus the connect
+dump's field counts and protocol version. It does not compare the wire bytes
+or event arguments; `wire.jsonl` is kept for looking them up.
+
+---
+
+## Capturing another client
+
+To see what a client such as ATEM Software Control sends, run only the
+recording proxy and point the client at `127.0.0.1`:
 
 ```powershell
-.\tools\build\Release\capture.exe                  # USB auto-detect
-.\tools\build\Release\capture.exe 192.168.10.240   # Ethernet
-# → writes captured-output.log
+atem-sweep 192.168.0.240 --capture 600 --out runs\asc   # to the real ATEM
+atem-sweep 127.0.0.2 --capture 600 --out runs\asc-emu    # to the emulator
 ```
 
----
-
-## What was captured and where it lives
-
-| Protocol element | Source | Where used in emulator |
-| --- | --- | --- |
-| `_ver` field bytes | BMD SDK version info | `AtemState.cpp` — `buildStateDump()` |
-| `_pin` product name | `IBMDSwitcher::GetProductName()` | `AtemState.cpp` — `fieldPin()` |
-| `_top` topology bytes | `IBMDSwitcherMixEffectBlock` counts | `AtemState.cpp` — `buildStateDump()` |
-| `InPr` (×14) input properties | `IBMDSwitcherInput` enumeration | `AtemState.cpp` |
-| `MPrp` macro properties | `IBMDSwitcherMacroPool::GetName/Desc` | `AtemState.cpp` — `fieldMPrp()` |
-| `MRPr` run-state field | `IBMDSwitcherMacroControl::GetRunStatus` | `AtemState.cpp` — `fieldMRPr()` |
-| Handshake flags & timing | Observed from SDK connection timing | `AtemServer.cpp` |
-| Command IDs (`CPgI`, `CKeO`, etc.) | Matched against SDK method calls | `AtemServer.cpp` — `dispatchCommand()` |
+It stops after the given seconds, or when a file named `stop` appears in the
+output folder, and writes `wire.jsonl`.
 
 ---
 
-## Annotating a capture log
+## Updating after a firmware or SDK change
 
-`capture.exe` writes a structured log (`captured-output.log`) with one entry
-per SDK field:
+1. Record a new golden record on the updated device (`atem-sweep <ip>`),
+   in its own folder under `sweep/golden`.
+2. Build a profile from it with `make_profile.py`.
+3. Verify the emulator against it and extend `device.cpp` until it passes.
 
-```text
-[macro 0] name="Opening Titles" desc="Fade in from black"
-[macro 1] name="Camera 1 Wide" desc=""
-[run-status] running=0 loop=0 index=65535
-[product] "ATEM Mini"
-[inputs] count=14
-```
-
-These values are then reflected in the byte arrays in `AtemState.cpp`. The
-fixed protocol fields (`_ver`, `_top`, `InPr`) were captured once against
-firmware 8.1.1 and are unlikely to change unless Blackmagic releases a major
-protocol revision.
+Keep the old record: the differences are the change.
 
 ---
 
-## Updating after a firmware change
+## Other tools
 
-If Blackmagic releases new ATEM firmware:
-
-1. Re-run `capture.exe` against the updated device
-2. Compare the new log against the previous one
-3. Update the changed field values in `AtemState.cpp` — specifically
-   `buildStateDump()` for `_ver`, `_top`, and the `InPr` array
-
----
+- `tools/capture-bmd.cpp` (`capture.exe`): lists what the SDK exposes over
+  USB or Ethernet (macro names, run status). SDK-level only, no packet bytes;
+  see [capture.exe.md](capture.exe.md).
 
 ## Protocol reference
 
-The following sources supplement the captured data:
-
-- **BMDSwitcherAPI.h** — COM interface definitions; field names like `PrgI`,
-  `KeDV`, `MPrp` correspond to SDK properties on the switcher interfaces
-- **[LibAtem / AtemUtils](https://github.com/LibAtem/AtemUtils)** — community
-  documentation of the ATEM wire protocol (third-party, use as secondary reference)
+- **BMDSwitcherAPI.h / .idl** (SDK) — the interfaces the fields belong to.
+- **[LibAtem / AtemUtils](https://github.com/LibAtem/AtemUtils)** and
+  atem-connection — community documentation of the wire protocol
+  (third-party; the recordings win where they disagree).

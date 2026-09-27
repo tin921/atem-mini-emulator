@@ -83,8 +83,16 @@ user waits; running replays those commands through the same handlers, frame
 timed, with loop and continue. Names and descriptions change with `CMPr`,
 slots are deleted with `MAct` 5. The recording, rename and delete layouts were
 confirmed with the SDK's own `Record` / `RecordPause` / `StopRecording` /
-`SetName` / `Delete` calls. The profile's four macros (recorded from the real
-ATEM by atem-sweep) replay the fields the real macro changed.
+`SetName` / `Delete` calls. While a macro waits for the user, `MRPr` byte 0 is
+2 (waiting) rather than 3 (running + waiting): with both bits the SDK reports
+"running" and never "waiting for user". That is the SDK's reading; the real
+switcher's byte has not been recorded yet.
+
+The profile's four macros (recorded from the real ATEM by atem-sweep) are an
+approximation: they replay the whole fields the real macro changed when run
+from that recording's starting state, all at once. A replayed field also
+overwrites its other values (e.g. a `KeDV` echo carries crop and border too),
+and a step that changed nothing at the time is missing.
 
 Handled commands: CInL, RInL, CPgI, CPvI, CTPr, DCut, DAut, CTPs, CTTp, CTWp,
 FtbA, FtbC, CKTp, CKeF, CKeC, CKOn, CKMs, CKDV, RFlK, CDsF, CDsC, CDsL, CDsT,
@@ -95,10 +103,21 @@ acknowledged and logged as unhandled.
 ## Limits
 
 - It emulates what the sweep exercises. Other commands are acknowledged but
-  change nothing: audio mixer, camera control, media upload, recording and
-  streaming (none of these exist on an ATEM Mini or are recorded yet).
-- The profile's own macros replay recorded results (their steps can't be
-  read from the device); macros recorded on the emulator run their steps.
+  change nothing (logged as unhandled). That includes things an ATEM Mini
+  does have and ATEM Software Control uses: the Fairlight audio mixer (the
+  recording shows it), camera control, still upload/download, colour
+  generators and several transition parameters. Recording and streaming do
+  not exist on the base ATEM Mini.
+- The profile's own macros are replayed approximations (above); macros
+  recorded on the emulator run their real steps. The SDK can download a
+  stored macro's bytes (`IBMDSwitcherMacroPool::Download` →
+  `IBMDSwitcherTransferMacro::GetMacro` → `IBMDSwitcherMacro::GetBytes`), a
+  better source for real macro steps than replayed fields — not used yet.
+- The transport assumes a well-behaved client on a clean network: packets
+  arriving out of order can lose a command, and the session id is not
+  checked after the handshake. Malformed commands are not validated, and some
+  handlers ignore the M/E index (the Mini has one). Media locks have no
+  owner, and every reply goes to every client.
 - There is no video (the emulator app draws the picture).
 
 To support more, record the real switcher with atem-sweep (after adding

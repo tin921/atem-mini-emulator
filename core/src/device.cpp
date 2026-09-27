@@ -441,10 +441,13 @@ void Device::setMacro(int index, const Macro& macro) {
 }
 
 // MRPr: byte 0 bit 0 running, bit 1 waiting for the user; byte 1 loop; index.
+// While waiting only bit 1 is set: with both bits the SDK reports "running"
+// and never "waiting for user" (the SDK's reading; not yet recorded from the
+// real switcher).
 void Device::setRunStatus(bool running, bool waiting, int index) {
     QByteArray* status = m_store.find("MRPr");
     if (!status) return;
-    setU8(*status, 0, static_cast<quint8>((running ? 1 : 0) | (waiting ? 2 : 0)));
+    setU8(*status, 0, static_cast<quint8>(waiting ? 2 : running ? 1 : 0));
     setU16(*status, 2, running ? static_cast<quint16>(index) : 0xffff);
     send("MRPr", status);
 }
