@@ -158,8 +158,7 @@ bool WireProxy::writeLog(const QString& path) const {
             { "hex", QString::fromLatin1(p.data.toHex()) },
             { "fields", fields },
         };
-        f.write(QJsonDocument(o).toJson(QJsonDocument::Compact));
-        f.write("\n");
+        if (f.write(QJsonDocument(o).toJson(QJsonDocument::Compact)) < 0 || f.write("\n") < 0) return false;
     }
-    return true;
+    return f.flush() && f.error() == QFileDevice::NoError;
 }

@@ -18,8 +18,18 @@ the emulator answers the same way.
 It **reads everything**, **changes settings and puts them back** (program /
 preview, key, PiP position / size / crop, transitions, input names, …) and
 **runs / stops the stored macros**. It **never deletes, uploads, clears,
-records or streams**. The switcher's state is snapshotted right after
-connecting and restored at the end.
+records or streams**.
+
+What "puts them back" covers is exactly the settings in the snapshot
+([src/snapshot.cpp](src/snapshot.cpp)), taken right after connecting. At the
+end each one is set back and checked, then everything is read back and
+compared; any setting that could not be read at the start, could not be set,
+or differs afterwards is listed and the run fails (exit code 5). **Your stored
+macros can change settings outside the snapshot** (audio, for example) when
+the macro tests run them; those are not restored.
+
+It will not start (exit code 4, nothing changed) while a macro is being
+recorded or is running: the sweep's commands would end up in the recording.
 
 It does visibly change the live output while it runs (inputs switch, the
 PiP moves, macros run, a short fade to black), so it asks before starting
@@ -65,7 +75,7 @@ The emulator's profile ([../core/profiles](../core/profiles)) is built from it.
 | Real ATEM Mini (record) | 269 passed, 0 failed, 4 skipped (empty macro slots) |
 | Real ATEM Mini vs its own golden record | all match (tally/time-code events excluded, see runner.cpp) |
 | Emulator core ([../core](../core)) vs golden | 269 passed, 0 failed |
-| Old GUI emulator ([../src](../src)) vs golden | fails at connect: the SDK rejects the state dump ("corrupt data", `cfcd`) |
+| Emulator app ([../src](../src), `--reference --listen 127.0.0.2`) vs golden | 269 passed, 0 failed (it runs on the same core) |
 
 The real device sends 75 kinds of field (364 fields) when a client connects;
 `connect.main` in `results.json` lists them all.
@@ -83,6 +93,33 @@ Some values are left out of the comparison because they don't come from the
 switcher: keys marked `(informational)` (timings, and the media player clip
 state, which an ATEM Mini never sends so the SDK returns whatever its memory
 held) and the tally/time-code events.
+
+What a verification does and doesn't prove: it compares, per test, the SDK's
+return codes and read-backs and *which kinds* of SDK event fired (a set: not
+their order, count or arguments), plus the connect dump's field counts. It
+does not compare wire bytes. Many SDK getters read the SDK's own cached state
+and some bad input is refused inside the SDK, so a match shows the emulator
+answers this test sequence like the device — not that it behaves the same in
+every situation.
+
+Checks on the run itself:
+
+- The golden record must be a passing recording: every test "pass" or
+  "skip", no duplicate ids — otherwise it is refused (exit code 2).
+- A full verification (no `--only`) fails if a test of the golden record is
+  missing from the current sweep.
+- The output folder is checked before connecting (exit code 2), and a
+  results file that could not be written fails the run (exit code 3).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | all passed |
+| 1 | a test failed or differs from the golden record |
+| 2 | could not start: bad golden record, output folder, proxy |
+| 3 | results could not be written |
+| 4 | a macro was recording / running: nothing was changed |
+| 5 | the switcher was not completely restored |
+| 6 | declined at the "Continue?" question: nothing was done |
 
 ## Output (`runs\<time>-<mode>\`)
 

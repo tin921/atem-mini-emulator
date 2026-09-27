@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QThread>
 #include <cstdio>
@@ -89,7 +90,10 @@ int main(int argc, char** argv) {
         QString dir = p.isSet(outDir) ? p.value(outDir)
                                       : QDir(QCoreApplication::applicationDirPath()).filePath(
                                             "runs/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + "-capture");
-        QDir().mkpath(dir);
+        if ((QFileInfo(dir).exists() && !QFileInfo(dir).isDir()) || !QDir().mkpath(dir)) {
+            QTextStream(stdout) << "Cannot use output folder " << QDir::toNativeSeparators(dir) << "\n";
+            return 2;
+        }
         QFile::remove(dir + "/stop");
         WireProxy proxy(QHostAddress::LocalHost, QHostAddress(target));
         QString error;
@@ -104,7 +108,10 @@ int main(int argc, char** argv) {
         t.start();
         while (t.elapsed() < seconds * 1000LL && !QFile::exists(dir + "/stop")) QThread::msleep(200);
         proxy.stopProxy();
-        proxy.writeLog(dir + "/wire.jsonl");
+        if (!proxy.writeLog(dir + "/wire.jsonl")) {
+            QTextStream(stdout) << "Could not write " << QDir::toNativeSeparators(dir + "/wire.jsonl") << "\n";
+            return 3;
+        }
         QTextStream(stdout) << "Wrote " << QDir::toNativeSeparators(dir + "/wire.jsonl") << "\n";
         return 0;
     }
@@ -127,12 +134,13 @@ int main(int argc, char** argv) {
                         << (opt.useProxy ? "  (via recording proxy 127.0.0.1:9910)" : "")
                         << "  mode: " << (opt.verify ? "verify against " + opt.goldenPath : QString("record")) << "\n"
                         << "\x1b[33mThis switches inputs, moves the PiP, runs the stored macros and fades to black\n"
-                        << "on the live output. Everything is put back at the end. Nothing is deleted.\x1b[0m\n";
+                        << "on the live output. The settings it changes are put back and checked at the end;\n"
+                        << "your stored macros may change others (e.g. audio), which are not. Nothing is deleted.\x1b[0m\n";
     if (!p.isSet(yes)) {
         QTextStream(stdout) << "Continue? [y/N] " << Qt::flush;
         std::string answer;
         std::getline(std::cin, answer);
-        if (answer != "y" && answer != "Y") return 3;
+        if (answer != "y" && answer != "Y") return 6;   // declined: nothing done
     }
 
     WireProxy* wire = nullptr;

@@ -52,6 +52,7 @@ IBMDSwitcherKeyFlyParameters::SetSizeX	atem-pip.cpp
 IBMDSwitcherKeyFlyParameters::SetSizeY	atem-pip.cpp
 IBMDSwitcherKeyIterator::Next	atem-pip.cpp
 IBMDSwitcherMacroControl::GetRunStatus	atem-controller.cpp
+IBMDSwitcherMacroControl::ResumeRunning	atem-controller.cpp
 IBMDSwitcherMacroControl::Run	atem-controller.cpp
 IBMDSwitcherMacroControl::StopRunning	atem-controller.cpp
 IBMDSwitcherMacroPool::AddCallback	atem-controller.cpp
@@ -67,3 +68,8 @@ IBMDSwitcherMixEffectBlock::GetProgramInput	atem-pip.cpp
 IBMDSwitcherMixEffectBlock::RemoveCallback	atem-pip.cpp
 IBMDSwitcherMixEffectBlock::SetProgramInput	atem-pip.cpp
 IBMDSwitcherMixEffectBlockIterator::Next	atem-pip.cpp
+IBMDSwitcherTransitionParameters::AddCallback	atem-pip.cpp
+IBMDSwitcherTransitionParameters::GetNextTransitionStyle	atem-pip.cpp
+IBMDSwitcherTransitionParameters::GetTransitionStyle	atem-pip.cpp
+IBMDSwitcherTransitionParameters::RemoveCallback	atem-pip.cpp
+IBMDSwitcherTransitionParameters::SetNextTransitionStyle	atem-pip.cpp

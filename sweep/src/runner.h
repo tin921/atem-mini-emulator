@@ -77,9 +77,11 @@ void registerMacroTests();
 void registerMediaTests();
 void registerDeviceTests();
 
-// Restores what the sweep changed (snapshot.cpp).
+// Restores what the sweep changed (snapshot.cpp): the settings listed in
+// Snapshot. Returns false if anything could not be read at the start, could
+// not be set, or reads back differently afterwards (all listed in log).
 struct Snapshot;
 Snapshot* takeSnapshot(Switcher& s);
-void restoreSnapshot(Switcher& s, Snapshot* snap, QStringList& log);
+bool restoreSnapshot(Switcher& s, Snapshot* snap, QStringList& log);
 
 int runSweep(Switcher& s, WireProxy* wire, const Options& opt);

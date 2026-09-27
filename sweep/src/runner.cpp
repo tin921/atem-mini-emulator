@@ -5,7 +5,9 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
+#include <QSaveFile>
 #include <QTextStream>
 #include <cmath>
 #include <cstdio>
@@ -198,11 +200,47 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
             out(paint("Cannot read golden record " + opt.goldenPath + "\n", "31"));
             return 2;
         }
-        for (const auto& v : QJsonDocument::fromJson(f.readAll()).object()["tests"].toArray())
-            golden[v.toObject()["id"].toString()] = v.toObject();
+        // A reference must be a recording that passed: every test "pass" or
+        // "skip" (e.g. an empty macro slot), each id once.
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &parseError);
+        QStringList invalid;
+        if (doc.isNull()) invalid << "not JSON: " + parseError.errorString();
+        else if (!doc.object()["tests"].isArray()) invalid << "no \"tests\" array";
+        for (const auto& v : doc.object()["tests"].toArray()) {
+            QJsonObject t = v.toObject();
+            QString id = t["id"].toString();
+            QString status = t["status"].toString();
+            if (id.isEmpty()) invalid << "a test without an id";
+            else if (golden.count(id)) invalid << "duplicate test id " + id;
+            else if (status != "pass" && status != "skip")
+                invalid << QString("%1 has status \"%2\" (a reference may only pass or skip)").arg(id, status);
+            golden[id] = t;
+        }
+        if (golden.empty() && invalid.isEmpty()) invalid << "no tests";
+        if (!invalid.isEmpty()) {
+            out(paint("Not a usable golden record: " + opt.goldenPath + "\n", "31"));
+            for (const QString& why : invalid) out("  " + why + "\n");
+            return 2;
+        }
     }
 
-    QDir().mkpath(opt.outDir);
+    // Check the output folder before touching the switcher.
+    QFileInfo outInfo(opt.outDir);
+    if ((outInfo.exists() && !outInfo.isDir()) || !QDir().mkpath(opt.outDir)) {
+        out(paint("Cannot use output folder " + QDir::toNativeSeparators(opt.outDir) + "\n", "31"));
+        return 2;
+    }
+    {
+        QFile probe(opt.outDir + "/.write-test");
+        bool writable = probe.open(QIODevice::WriteOnly) && probe.write("x") == 1;
+        probe.close();
+        probe.remove();
+        if (!writable) {
+            out(paint("Cannot write in output folder " + QDir::toNativeSeparators(opt.outDir) + "\n", "31"));
+            return 2;
+        }
+    }
     QJsonArray results;
     Snapshot* snapshot = nullptr;
     int pass = 0, fail = 0, skip = 0, error = 0;
@@ -275,16 +313,45 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
         for (const QString& x : notes) out("        " + paint("note: ", "33") + x + "\n");
 
         if (t.id == "connect.main" && s.connected() && !snapshot) {
+            // Nothing has changed yet. Don't start while a macro is being
+            // recorded (the sweep's commands would end up in it) or runs.
+            BMDSwitcherMacroRecordStatus rec = bmdSwitcherMacroRecordStatusIdle;
+            BMDSwitcherMacroRunStatus run = bmdSwitcherMacroRunStatusIdle;
+            unsigned int recIndex = 0, runIndex = 0;
+            BOOL loop = FALSE;
+            if (s.macros) {
+                s.macros->GetRecordStatus(&rec, &recIndex);
+                s.macros->GetRunStatus(&run, &loop, &runIndex);
+            }
+            bool recording = rec != bmdSwitcherMacroRecordStatusIdle;
+            if (recording || run != bmdSwitcherMacroRunStatusIdle) {
+                out(paint(QString("\nThe switcher is %1 macro %2: stopping before changing anything.\n")
+                              .arg(recording ? "recording" : "running").arg((recording ? recIndex : runIndex) + 1), "31;1"));
+                return 4;
+            }
             snapshot = takeSnapshot(s);
             productName = c.obs["productName"].toString();
         }
     }
 
+    // A full verification also needs every test of the reference to exist.
+    if (opt.verify && opt.only.isEmpty()) {
+        std::set<QString> ran;
+        for (const auto* t : selected) ran.insert(t->id);
+        for (const auto& [id, g] : golden) {
+            if (ran.count(id)) continue;
+            out("        " + paint("missing: ", "31") + id + " is in the golden record but not in this sweep\n");
+            ++fail;
+        }
+    }
+
     QStringList restoreLog;
+    bool restored = true;
     if (snapshot) {
         out(paint("\nRestoring the switcher to its state before the sweep...\n", "36"));
-        restoreSnapshot(s, snapshot, restoreLog);
+        restored = restoreSnapshot(s, snapshot, restoreLog);
         for (const QString& l : restoreLog) out("  " + l + "\n");
+        if (!restored) out(paint("  RESTORE INCOMPLETE: see above\n", "31;1"));
     }
 
     QJsonObject coverage;
@@ -308,14 +375,23 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
         { "summary", QJsonObject{ { "pass", pass }, { "fail", fail }, { "skip", skip }, { "error", error } } },
         { "coverage", coverage },
         { "restore", QJsonArray::fromStringList(restoreLog) },
+        { "restored", restored },
         { "tests", results },
     };
-    QFile f(opt.outDir + "/results.json");
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(QJsonDocument(doc).toJson());
-    if (wire) wire->writeLog(opt.outDir + "/wire.jsonl");
-    QFile cov(opt.outDir + "/coverage.txt");
-    if (cov.open(QIODevice::WriteOnly | QIODevice::Truncate)) cov.write(coverageText.toUtf8());
+    auto writeFile = [](const QString& path, const QByteArray& data) {
+        QSaveFile f(path);   // written completely or not at all
+        return f.open(QIODevice::WriteOnly) && f.write(data) == data.size() && f.commit();
+    };
+    QStringList unwritten;
+    if (!writeFile(opt.outDir + "/results.json", QJsonDocument(doc).toJson())) unwritten << "results.json";
+    if (wire && !wire->writeLog(opt.outDir + "/wire.jsonl")) unwritten << "wire.jsonl";
+    if (!writeFile(opt.outDir + "/coverage.txt", coverageText.toUtf8())) unwritten << "coverage.txt";
+    if (!unwritten.isEmpty()) {
+        out(paint("Could not write " + unwritten.join(", ") + " in " + QDir::toNativeSeparators(opt.outDir) + "\n", "31;1"));
+        return 3;
+    }
     out(paint("Results: " + QDir::toNativeSeparators(opt.outDir) + "\n", "90"));
 
+    if (!restored) return 5;
     return (fail || error) ? 1 : 0;
 }
