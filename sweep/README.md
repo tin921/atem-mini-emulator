@@ -148,7 +148,7 @@ back — for good input and for bad.
 
 ## Coverage
 
-### The five categories
+### The six categories
 
 Every callable SDK method (1,264: the current interfaces, without the
 callback interfaces a client implements) is in exactly one category.
@@ -158,10 +158,11 @@ verify run and writes two lists:
 | List | Category | Methods (2026-09-28) | Meaning |
 |---|---|---:|---|
 | [api-supported.tsv](coverage/api-supported.tsv) | 1 emulator | 252 | recorded on the real ATEM, emulated and verified |
-| | 2 samples | 1 | used by the SDK samples, not yet recorded (camera autofocus, opt-in) |
-| | 3 sweep | 471 | every other safe function the ATEM Mini has: still to record, then emulate |
-| [api-unsupported.tsv](coverage/api-unsupported.tsv) | 4 not on mini | 525 | the ATEM Mini doesn't have it ([not-on-mini.txt](coverage/not-on-mini.txt)) |
-| | 5 destructive | 15 | deletes, overwrites stored content, records ([excluded.txt](coverage/excluded.txt)) |
+| | 2 samples | 0 | used by the SDK samples, not yet recorded |
+| | 3 sweep | 398 | every other safe function the ATEM Mini has: still to record, then emulate |
+| | 4 hardware | 74 | safe and on the Mini, but needs hardware this setup lacks: a HyperDeck, a Blackmagic camera ([needs-hardware.txt](coverage/needs-hardware.txt)) |
+| [api-unsupported.tsv](coverage/api-unsupported.tsv) | 5 not on mini | 525 | the ATEM Mini doesn't have it ([not-on-mini.txt](coverage/not-on-mini.txt)) |
+| | 6 destructive | 15 | deletes, overwrites stored content, records ([excluded.txt](coverage/excluded.txt)) |
 | | **total** | **1,264** | |
 
 ```powershell
@@ -170,7 +171,8 @@ python coverage\categories.py <verify run>\results.json   # also writes coverage
 
 "Not on mini" is *recorded* when the real ATEM refused the interface in a
 sweep run, and *expected* (400 of the 525) until a read-only probe on the
-real ATEM confirms it. Work moves methods from 3 (and 2) to 1: add sweep
+real ATEM confirms it. "Hardware" methods become sweep targets (3) once that
+hardware is connected. Work moves methods from 3 (and 2) to 1: add sweep
 tests, record the real ATEM, extend the emulator core until verify passes.
 
 ### Call tracking

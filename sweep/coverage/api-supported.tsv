@@ -34,35 +34,35 @@ IBMDSwitcher::DoesSupportTallyConfig	3 sweep	to record and emulate
 IBMDSwitcher::CreateIterator	1 emulator	verified against the real ATEM record
 IBMDSwitcher::AddCallback	1 emulator	verified against the real ATEM record
 IBMDSwitcher::RemoveCallback	1 emulator	verified against the real ATEM record
-IBMDSwitcherCameraControl::CreateIterator	3 sweep	to record and emulate
+IBMDSwitcherCameraControl::CreateIterator	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
 IBMDSwitcherCameraControl::GetPeriodicFlushInterval	1 emulator	verified against the real ATEM record
-IBMDSwitcherCameraControl::SetPeriodicFlushInterval	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetParameterInfo	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetParameterPeriodicFlushEnabled	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetParameterPeriodicFlushEnabled	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetFlags	2 samples	used by the SDK samples; to record and emulate (opt-in: camera action (instant autofocus) on a Blackmagic camera; runs with --allow-camera)
-IBMDSwitcherCameraControl::ToggleFlags	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetFlags	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetInt8s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::OffsetInt8s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetInt8s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetInt16s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::OffsetInt16s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetInt16s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetInt32s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::OffsetInt32s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetInt32s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetInt64s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::OffsetInt64s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetInt64s	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::SetString	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::GetString	3 sweep	to record and emulate
+IBMDSwitcherCameraControl::SetPeriodicFlushInterval	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetParameterInfo	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetParameterPeriodicFlushEnabled	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetParameterPeriodicFlushEnabled	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetFlags	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::ToggleFlags	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetFlags	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetInt8s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::OffsetInt8s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetInt8s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetInt16s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::OffsetInt16s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetInt16s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetInt32s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::OffsetInt32s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetInt32s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetInt64s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::OffsetInt64s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetInt64s	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::SetString	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::GetString	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
 IBMDSwitcherCameraControl::OffsetFloats	1 emulator	verified against the real ATEM record
 IBMDSwitcherCameraControl::SetFloats	1 emulator	verified against the real ATEM record
 IBMDSwitcherCameraControl::GetFloats	1 emulator	verified against the real ATEM record
-IBMDSwitcherCameraControl::AddCallback	3 sweep	to record and emulate
-IBMDSwitcherCameraControl::RemoveCallback	3 sweep	to record and emulate
-IBMDSwitcherCameraControlParameterIterator::Next	3 sweep	to record and emulate
+IBMDSwitcherCameraControl::AddCallback	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControl::RemoveCallback	4 hardware	needs a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControlParameterIterator::Next	4 hardware	needs a Blackmagic camera on an HDMI input
 IBMDSwitcherDiscovery::ConnectTo	1 emulator	verified against the real ATEM record
 IBMDSwitcherDownstreamKey::GetInputCut	1 emulator	verified against the real ATEM record
 IBMDSwitcherDownstreamKey::SetInputCut	1 emulator	verified against the real ATEM record
@@ -251,60 +251,60 @@ IBMDSwitcherFairlightAudioSource::RemoveCallback	3 sweep	to record and emulate
 IBMDSwitcherFairlightAudioSourceIterator::Next	3 sweep	to record and emulate
 IBMDSwitcherFairlightAudioSourceIterator::GetById	3 sweep	to record and emulate
 IBMDSwitcherFrame::GetBytes	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeck::GetId	3 sweep	to record and emulate
+IBMDSwitcherHyperDeck::GetId	4 hardware	needs a HyperDeck on the network, connected to the ATEM
 IBMDSwitcherHyperDeck::GetConnectionStatus	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeck::IsRemoteAccessEnabled	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetStorageMediaCount	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetStorageMediaState	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetActiveStorageMedia	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetActiveStorageMedia	3 sweep	to record and emulate
+IBMDSwitcherHyperDeck::IsRemoteAccessEnabled	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetStorageMediaCount	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetStorageMediaState	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetActiveStorageMedia	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetActiveStorageMedia	4 hardware	needs a HyperDeck on the network, connected to the ATEM
 IBMDSwitcherHyperDeck::GetClipCount	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeck::CreateIterator	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetSwitcherInput	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetSwitcherInput	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetFrameRate	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::IsInterlacedVideo	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::IsDropFrameTimeCode	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetPlayerState	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetCurrentClip	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetCurrentClip	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetCurrentClipTime	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetCurrentClipTime	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetCurrentTimelineTime	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetCurrentTimelineTime	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetEstimatedRecordTimeRemaining	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::Play	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::Stop	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::Shuttle	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetShuttleSpeed	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::Jog	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetLoopedPlayback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetLoopedPlayback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetSingleClipPlayback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetSingleClipPlayback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetAutoRollOnTake	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetAutoRollOnTake	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::GetAutoRollOnTakeFrameDelay	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::SetAutoRollOnTakeFrameDelay	3 sweep	to record and emulate
+IBMDSwitcherHyperDeck::CreateIterator	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetSwitcherInput	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetSwitcherInput	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetFrameRate	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::IsInterlacedVideo	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::IsDropFrameTimeCode	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetPlayerState	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetCurrentClip	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetCurrentClip	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetCurrentClipTime	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetCurrentClipTime	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetCurrentTimelineTime	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetCurrentTimelineTime	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetEstimatedRecordTimeRemaining	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::Play	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::Stop	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::Shuttle	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetShuttleSpeed	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::Jog	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetLoopedPlayback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetLoopedPlayback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetSingleClipPlayback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetSingleClipPlayback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetAutoRollOnTake	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetAutoRollOnTake	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::GetAutoRollOnTakeFrameDelay	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::SetAutoRollOnTakeFrameDelay	4 hardware	needs a HyperDeck on the network, connected to the ATEM
 IBMDSwitcherHyperDeck::GetNetworkAddress	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeck::SetNetworkAddress	3 sweep	to record and emulate
+IBMDSwitcherHyperDeck::SetNetworkAddress	4 hardware	needs a HyperDeck on the network, connected to the ATEM
 IBMDSwitcherHyperDeck::GetModelName	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeck::GetStorageMediaInfo	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::AddCallback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeck::RemoveCallback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::IsValid	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::IsInfoAvailable	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::GetId	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::GetName	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::GetDuration	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::GetTimelineStart	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::GetTimelineEnd	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::AddCallback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClip::RemoveCallback	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClipIterator::Next	3 sweep	to record and emulate
-IBMDSwitcherHyperDeckClipIterator::GetById	3 sweep	to record and emulate
+IBMDSwitcherHyperDeck::GetStorageMediaInfo	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::AddCallback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeck::RemoveCallback	4 hardware	needs a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeckClip::IsValid	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::IsInfoAvailable	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::GetId	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::GetName	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::GetDuration	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::GetTimelineStart	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::GetTimelineEnd	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::AddCallback	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClip::RemoveCallback	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClipIterator::Next	4 hardware	needs a HyperDeck with clips
+IBMDSwitcherHyperDeckClipIterator::GetById	4 hardware	needs a HyperDeck with clips
 IBMDSwitcherHyperDeckIterator::Next	1 emulator	verified against the real ATEM record
-IBMDSwitcherHyperDeckIterator::GetById	3 sweep	to record and emulate
+IBMDSwitcherHyperDeckIterator::GetById	4 hardware	needs a HyperDeck on the network
 IBMDSwitcherIdentityInformation::GetUniqueId	3 sweep	to record and emulate
 IBMDSwitcherIdentityInformation::GetIpAddress	3 sweep	to record and emulate
 IBMDSwitcherIdentityInformation::GetMdnsName	3 sweep	to record and emulate

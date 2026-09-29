@@ -1,0 +1,13 @@
+# SDK functions the ATEM Mini has and that are safe to call, but that need
+# hardware the test setup doesn't have: without it the switcher only answers
+# "nothing connected", so a recording would not show the real behaviour.
+# Interface or Interface::Method<TAB>hardware needed
+# When the hardware is connected, remove the line: the methods become sweep
+# targets (category 3). categories.py counts these as "needs hardware".
+
+IBMDSwitcherHyperDeck	a HyperDeck on the network, connected to the ATEM
+IBMDSwitcherHyperDeckIterator	a HyperDeck on the network
+IBMDSwitcherHyperDeckClip	a HyperDeck with clips
+IBMDSwitcherHyperDeckClipIterator	a HyperDeck with clips
+IBMDSwitcherCameraControl	a Blackmagic camera on an HDMI input (camera control over HDMI)
+IBMDSwitcherCameraControlParameterIterator	a Blackmagic camera on an HDMI input

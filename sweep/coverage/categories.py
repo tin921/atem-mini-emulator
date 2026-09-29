@@ -1,4 +1,4 @@
-"""Sorts every method of the switcher SDK into five categories.
+"""Sorts every method of the switcher SDK into six categories.
 
     python categories.py <results.json of an emulator verify run>
 
@@ -6,15 +6,17 @@ Every callable method of BMDSwitcherAPI (sdk-api.json without the legacy
 _vX interfaces and without callback interfaces, which a client implements
 rather than calls) gets exactly one category, in this order:
 
-  supported (the sweep's targets: record them on the real ATEM, then emulate)
+  supported (the ATEM Mini has it and it is safe)
     1 emulator     called by atem-sweep in the given emulator verify run
                    (verified: the emulator answers like the real ATEM)
     2 samples      used by the SDK samples (tier2-samples.txt), not yet in 1
     3 sweep        every other method the ATEM Mini has and that is safe:
                    still to be recorded by the sweep and emulated
+    4 hardware     needs-hardware.txt: needs hardware the test setup lacks
+                   (a HyperDeck, a Blackmagic camera); not a sweep target yet
   unsupported (never sweep targets)
-    4 not on mini  not-on-mini.txt (recorded or expected)
-    5 destructive  excluded.txt (deletes, overwrites stored content, records,
+    5 not on mini  not-on-mini.txt (recorded or expected)
+    6 destructive  excluded.txt (deletes, overwrites stored content, records,
                    streams), except opt-in actions such as camera autofocus
 
 Writes api-supported.tsv, api-unsupported.tsv and api-categories.txt (the
@@ -49,6 +51,7 @@ def main():
 
     samples = {row[0] for row in lines('tier2-samples.txt')}
     not_on_mini = {row[0]: (row[1], row[2]) for row in lines('not-on-mini.txt')}
+    hardware = {row[0]: row[1] for row in lines('needs-hardware.txt')}
     destructive, opt_in = {}, {}
     for row in lines('excluded.txt'):
         (opt_in if '--allow-' in row[1] else destructive)[row[0]] = row[1]
@@ -60,9 +63,11 @@ def main():
             supported.append((m, '1 emulator', 'verified against the real ATEM record'))
         elif m in not_on_mini or iface in not_on_mini:
             evidence, reason = not_on_mini.get(m) or not_on_mini[iface]
-            unsupported.append((m, '4 not on mini', f'{evidence}: {reason}'))
+            unsupported.append((m, '5 not on mini', f'{evidence}: {reason}'))
         elif m in destructive:
-            unsupported.append((m, '5 destructive', destructive[m]))
+            unsupported.append((m, '6 destructive', destructive[m]))
+        elif m in hardware or iface in hardware:
+            supported.append((m, '4 hardware', 'needs ' + (hardware.get(m) or hardware[iface])))
         else:
             cat = '2 samples' if m in samples else '3 sweep'
             note = 'used by the SDK samples; to record and emulate' if m in samples else 'to record and emulate'
@@ -82,7 +87,7 @@ def main():
     counts = {}
     for _, cat, note in supported + unsupported:
         counts[cat] = counts.get(cat, 0) + 1
-    expected = sum(1 for _, cat, note in unsupported if cat == '4 not on mini' and note.startswith('expected'))
+    expected = sum(1 for _, cat, note in unsupported if cat == '5 not on mini' and note.startswith('expected'))
     out = [f'SDK methods (current interfaces, callbacks excluded): {len(methods)}',
            f'emulator verify run: {os.path.basename(os.path.dirname(os.path.abspath(sys.argv[1])))}'
            + (f' — WARNING: {failed} failed tests; category 1 assumes a passing run' if failed else ''),
@@ -91,9 +96,10 @@ def main():
            f'  1 emulator    {counts.get("1 emulator", 0):5}   recorded on the real ATEM and emulated (verified)',
            f'  2 samples     {counts.get("2 samples", 0):5}   used by the SDK samples, not yet emulated',
            f'  3 sweep       {counts.get("3 sweep", 0):5}   other safe ATEM Mini functions, still to record and emulate',
+           f'  4 hardware    {counts.get("4 hardware", 0):5}   need hardware the test setup lacks (HyperDeck, Blackmagic camera)',
            f'unsupported  {len(unsupported):5}',
-           f'  4 not on mini {counts.get("4 not on mini", 0):5}   ({expected} of them expected, to confirm with a read-only probe)',
-           f'  5 destructive {counts.get("5 destructive", 0):5}   deletes, overwrites stored content, records',
+           f'  5 not on mini {counts.get("5 not on mini", 0):5}   ({expected} of them expected, to confirm with a read-only probe)',
+           f'  6 destructive {counts.get("6 destructive", 0):5}   deletes, overwrites stored content, records',
            f'total        {len(supported) + len(unsupported):5}']
     assert len(supported) + len(unsupported) == len(methods)
     text = '\n'.join(out) + '\n'
