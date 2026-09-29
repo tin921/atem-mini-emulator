@@ -71,11 +71,12 @@ QCheckBox::indicator:checked { background:#1a5acc; border-color:#3377ff; }
 QLineEdit             { background:#161616; border:1px solid #2a2a2a; color:#ccc;
                          padding:2px 5px; border-radius:4px; }
 QLineEdit:focus       { border-color:#1a5acc; }
-QSpinBox {
+QSpinBox,QDoubleSpinBox {
     background:#161616; border:1px solid #2a2a2a; color:#ccc;
     padding:2px 5px; border-radius:4px; font-size:12px; }
-QSpinBox:focus { border-color:#1a5acc; }
-QSpinBox::up-button,QSpinBox::down-button { width:0; height:0; border:0; }
+QSpinBox:focus,QDoubleSpinBox:focus { border-color:#1a5acc; }
+QSpinBox::up-button,QSpinBox::down-button,
+QDoubleSpinBox::up-button,QDoubleSpinBox::down-button { width:0; height:0; border:0; }
 QListWidget           { background:#141414; border:1px solid #222; color:#bbb;
                          border-radius:4px; outline:0; }
 QListWidget::item     { padding:3px 8px; border-radius:3px; }
@@ -124,14 +125,47 @@ static QPushButton* makeSmallBtn(const char* lbl,
 
 // ── Spinbox factory ───────────────────────────────────────────────────────────
 
+// The mouse wheel steps a number box only while it has the focus (click it
+// first), so scrolling over the panel never changes a value by accident.
+// Ctrl + wheel steps ten at a time (Qt's default step modifier).
+class WheelWhenFocused : public QObject
+{
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (e->type() == QEvent::Wheel && !static_cast<QWidget*>(o)->hasFocus()) {
+            e->ignore();
+            return true;
+        }
+        return false;
+    }
+};
+
+static void setupNumberBox(QAbstractSpinBox* s)
+{
+    s->setFixedWidth(78);
+    s->setFocusPolicy(Qt::StrongFocus);
+    s->installEventFilter(new WheelWhenFocused(s));
+}
+
 /*static*/ QSpinBox* MainWindow::makeSpin(int lo, int hi, int val, const QString& suffix)
 {
     auto* s = new QSpinBox;
     s->setRange(lo, hi);
     s->setValue(val);
-    s->setFixedWidth(78);
-    s->setFocusPolicy(Qt::WheelFocus);
+    setupNumberBox(s);
     if (!suffix.isEmpty()) s->setSuffix(suffix);
+    return s;
+}
+
+/*static*/ QDoubleSpinBox* MainWindow::makeDoubleSpin(double lo, double hi, double step, int decimals)
+{
+    auto* s = new QDoubleSpinBox;
+    s->setDecimals(decimals);
+    s->setRange(lo, hi);
+    s->setSingleStep(step);
+    s->setValue(0);
+    setupNumberBox(s);
     return s;
 }
 
@@ -648,7 +682,7 @@ QWidget* MainWindow::buildDveSection()
             if (e->type() == QEvent::FocusOut) cb(); return false;
         }
     };
-    auto onBlur = [](QSpinBox* sp, std::function<void()> fn) {
+    auto onBlur = [](QWidget* sp, std::function<void()> fn) {
         auto* f = new Filter; f->cb = fn; f->setParent(sp);
         sp->installEventFilter(f);
     };
@@ -684,17 +718,20 @@ QWidget* MainWindow::buildDveSection()
     lg->addWidget(rl("Y"),  r, 3); lg->addWidget(m_sizeYSpin, r, 4);
     lg->addWidget(m_lockSize, r, 5); ++r;
 
-    // Position in 100ths of the ATEM's frame units: +-1600 / +-900 is the
-    // frame edge. The switcher accepts far larger values (a PiP parked off
-    // screen), so the boxes go to +-200 units and always show the real value.
-    m_posXSpin = makeSpin(-20000, 20000, 0);
-    m_posYSpin = makeSpin(-20000, 20000, 0);
-    connect(m_posXSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ DveParams p; p.positionX = v / 100.0; sendDve(PositionX, p); });
-    connect(m_posYSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
-            [this](int v){ DveParams p; p.positionY = v / 100.0; sendDve(PositionY, p); });
-    onBlur(m_posXSpin, [this]{ uiLog(QString("PiP Pos X: %1").arg(m_posXSpin->value() / 100.0)); });
-    onBlur(m_posYSpin, [this]{ uiLog(QString("PiP Pos Y: %1").arg(m_posYSpin->value() / 100.0)); });
+    // Position in the ATEM's frame units, as ATEM Software Control shows it:
+    // +-16 / +-9 is the frame edge, +Y up. The switcher accepts far larger
+    // values (a PiP parked off screen), so the boxes go to +-200. A wheel
+    // notch or arrow key moves 0.1 (Ctrl: 1.0).
+    m_posXSpin = makeDoubleSpin(-200, 200, 0.1, 2);
+    m_posYSpin = makeDoubleSpin(-200, 200, 0.1, 2);
+    m_posXSpin->setToolTip("Frame edges at ±16.00; wheel 0.1, Ctrl+wheel 1.0");
+    m_posYSpin->setToolTip("Frame edges at ±9.00, +Y up; wheel 0.1, Ctrl+wheel 1.0");
+    connect(m_posXSpin, &QDoubleSpinBox::valueChanged, this,
+            [this](double v){ DveParams p; p.positionX = v; sendDve(PositionX, p); });
+    connect(m_posYSpin, &QDoubleSpinBox::valueChanged, this,
+            [this](double v){ DveParams p; p.positionY = v; sendDve(PositionY, p); });
+    onBlur(m_posXSpin, [this]{ uiLog(QString("PiP Pos X: %1").arg(m_posXSpin->value(), 0, 'f', 2)); });
+    onBlur(m_posYSpin, [this]{ uiLog(QString("PiP Pos Y: %1").arg(m_posYSpin->value(), 0, 'f', 2)); });
 
     lg->addWidget(rl("Position", 52), r, 0);
     lg->addWidget(rl("X"), r, 1); lg->addWidget(m_posXSpin, r, 2);
@@ -897,6 +934,25 @@ void MainWindow::buildUi()
     h->addWidget(buildLeftPanel(), 1);
     h->addWidget(div);
     h->addWidget(buildRightPanel(), 2);
+
+    // Dragging the PiP in the preview: the same DVE commands as the boxes.
+    m_preview->setLockAspect(m_lockSize->isChecked());
+    connect(m_lockSize, &QCheckBox::toggled, m_preview, &PreviewWidget::setLockAspect);
+    connect(m_preview, &PreviewWidget::pipEdited, this,
+            [this](double posX, double posY, double sizeX, double sizeY, bool resized) {
+        using namespace emu::cmd;
+        DveParams p;
+        p.positionX = posX; p.positionY = posY; p.sizeX = sizeX; p.sizeY = sizeY;
+        sendDve(PositionX | PositionY | (resized ? SizeX | SizeY : 0u), p);
+    });
+    connect(m_preview, &PreviewWidget::pipEditFinished, this, [this](bool resized) {
+        emu::SwitcherView v = m_device.view();
+        QString pos = QString("X %1, Y %2").arg(v.positionX, 0, 'f', 2).arg(v.positionY, 0, 'f', 2);
+        uiLog(resized ? QString("PiP resized: %1 x %2%, %3").arg(qRound(v.sizeX * 100))
+                                                           .arg(qRound(v.sizeY * 100)).arg(pos)
+                      : "PiP moved: " + pos);
+    });
+
     m_statusLabel = new QLabel;
     statusBar()->addWidget(m_statusLabel, 1);
     statusBar()->setStyleSheet("background:#0a0a0a;color:#333;"
@@ -1128,8 +1184,10 @@ void MainWindow::syncKeyerUi()
 
     blk(m_sizeXSpin, qRound(v.sizeX * 100));
     blk(m_sizeYSpin, qRound(v.sizeY * 100));
-    blk(m_posXSpin,  qRound(v.positionX * 100));
-    blk(m_posYSpin,  qRound(v.positionY * 100));
+    for (auto [w, value] : { std::pair{ m_posXSpin, v.positionX }, std::pair{ m_posYSpin, v.positionY } }) {
+        if (!w || qFuzzyCompare(1 + w->value(), 1 + value)) continue;
+        w->blockSignals(true); w->setValue(value); w->blockSignals(false);
+    }
     blk(m_borderSpin, v.borderEnabled ? qRound(v.borderWidth * 3.125) : 0);
     blk(m_cropTSpin, v.masked ? qRound(v.maskTop / 0.18) : 0);
     blk(m_cropBSpin, v.masked ? qRound(v.maskBottom / 0.18) : 0);
@@ -1205,7 +1263,7 @@ void MainWindow::onMacroRun()
         uiLog("Macro stopped");
         return;
     }
-    auto* sel = m_macroList->currentItem(); if (!sel) return;
+    auto* sel = selectedMacroItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
     if (!m_device.macro(slot).used) { uiLog(QString("Macro slot %1 is empty").arg(slot + 1)); return; }
     uiLog(QString("Macro run: \"%1\"").arg(m_device.macro(slot).name));
@@ -1214,7 +1272,7 @@ void MainWindow::onMacroRun()
 
 void MainWindow::onMacroUpdate()
 {
-    auto* sel = m_macroList->currentItem(); if (!sel) return;
+    auto* sel = selectedMacroItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
     QString name = m_macroNameEdit->text().trimmed();
     QString desc = m_macroDescEdit->toPlainText().trimmed();
@@ -1236,7 +1294,7 @@ void MainWindow::onMacroUpdate()
 void MainWindow::onMacroSaveOutput()
 {
     using namespace emu::cmd;
-    auto* sel = m_macroList->currentItem();
+    auto* sel = selectedMacroItem();
     if (!sel) { uiLog("Save Output: no macro selected"); return; }
     int slot = sel->data(Qt::UserRole).toInt();
     emu::SwitcherView v = m_device.view();
@@ -1296,7 +1354,7 @@ void MainWindow::onMacroSaveOutput()
 
 void MainWindow::onMacroSelectionChanged()
 {
-    auto* sel = m_macroList->currentItem(); if (!sel) return;
+    auto* sel = selectedMacroItem(); if (!sel) return;
     int slot = sel->data(Qt::UserRole).toInt();
     m_macroNameEdit->setText(m_device.macro(slot).name);
     m_macroDescEdit->setPlainText(m_device.macro(slot).description);
@@ -1387,11 +1445,19 @@ void MainWindow::updateSnapshotDisplay(int slot)
     if (m_snapshotView) m_snapshotView->setPlainText(describeMacro(slot));
 }
 
+// The selected slot. Not currentItem(): accessibility tools (UI Automation)
+// select a row without making it current.
+QListWidgetItem* MainWindow::selectedMacroItem() const
+{
+    QList<QListWidgetItem*> items = m_macroList ? m_macroList->selectedItems() : QList<QListWidgetItem*>();
+    return items.isEmpty() ? nullptr : items.first();
+}
+
 void MainWindow::syncMacroList()
 {
     if (!m_macroList) return;
-    int selSlot = m_macroList->currentItem()
-        ? m_macroList->currentItem()->data(Qt::UserRole).toInt() : -1;
+    int selSlot = selectedMacroItem()
+        ? selectedMacroItem()->data(Qt::UserRole).toInt() : -1;
     m_macroList->clear();
     for (int i = 0; i < m_device.macroCount(); ++i) {
         const emu::Macro& mac = m_device.macro(i);
@@ -1501,6 +1567,7 @@ void MainWindow::onRefreshPreview()
         p.fillRect(frame.rect(), QColor(0, 0, 0, qRound(black * 255)));
     }
 
+    m_preview->setPip(pipState(v));
     m_preview->setFrame(frame);
     if (m_webcamActive) pushWebcamFrame(frame);
     updateSourceThumbs();

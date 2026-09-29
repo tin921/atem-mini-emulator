@@ -10,6 +10,7 @@
 #include <QMainWindow>
 #include <QLabel>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QListWidget>
 #include <QLineEdit>
@@ -67,6 +68,7 @@ private:
     QWidget* buildMacroSection();
     static QWidget* sectionHeader(const char* title);
     static QSpinBox* makeSpin(int lo, int hi, int val, const QString& suffix = {});
+    static QDoubleSpinBox* makeDoubleSpin(double lo, double hi, double step, int decimals);
 
     void uiLog(const QString& msg);
     void saveMacros();
@@ -76,6 +78,7 @@ private:
     void syncProgramButtons();
     void syncKeyerUi();
     void syncMacroList();
+    QListWidgetItem* selectedMacroItem() const;
     void updateMacroStatus();
     void updateBorderColorBtn();
     void updateColorBtnStyle(int i);
@@ -138,8 +141,8 @@ private:
     QPushButton*  m_borderColorBtn = nullptr;
     QSpinBox*     m_sizeXSpin      = nullptr;
     QSpinBox*     m_sizeYSpin      = nullptr;
-    QSpinBox*     m_posXSpin       = nullptr;
-    QSpinBox*     m_posYSpin       = nullptr;
+    QDoubleSpinBox* m_posXSpin     = nullptr;
+    QDoubleSpinBox* m_posYSpin     = nullptr;
     QSpinBox*     m_rotationSpin   = nullptr;
     QSpinBox*     m_borderSpin     = nullptr;
     QSpinBox*     m_opacitySpin    = nullptr;
