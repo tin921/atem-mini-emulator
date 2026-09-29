@@ -27,3 +27,11 @@ target_compile_definitions(atem-emu PRIVATE ATEM_EMU_PROFILES="${CMAKE_CURRENT_S
 
 install(TARGETS atem-emu RUNTIME DESTINATION .)
 install(DIRECTORY profiles DESTINATION .)
+
+# Offline regression tests (ctest): hostile input, transfers, field identity,
+# profiles, macro bytes, and the transport over UDP on 127.0.0.3.
+enable_testing()
+add_executable(atem-emu-tests tests/core_tests.cpp)
+target_link_libraries(atem-emu-tests PRIVATE atem-emu-core)
+target_compile_definitions(atem-emu-tests PRIVATE ATEM_EMU_PROFILES="${CMAKE_CURRENT_SOURCE_DIR}/profiles")
+add_test(NAME atem-emu-tests COMMAND atem-emu-tests)

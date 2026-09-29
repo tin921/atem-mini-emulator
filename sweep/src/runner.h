@@ -91,6 +91,7 @@ void registerDeviceTests();
 // not be set, or reads back differently afterwards (all listed in log).
 struct Snapshot;
 Snapshot* takeSnapshot(Switcher& s);
+QStringList snapshotUnread(const Snapshot* snap);   // settings that could not be read at the start
 bool restoreSnapshot(Switcher& s, Snapshot* snap, QStringList& log);
 
 int runSweep(Switcher& s, WireProxy* wire, const Options& opt);

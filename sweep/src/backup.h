@@ -16,8 +16,12 @@
 //
 // Taking a backup is read-only: it downloads, it never uploads or changes.
 
+#include <QJsonObject>
 #include <QString>
 #include <QTextStream>
+#include <map>
+#include <utility>
+#include <vector>
 
 class Switcher;
 class WireProxy;
@@ -37,6 +41,19 @@ int takeBackup(Switcher& s, WireProxy* wire, const QString& connectAddress, cons
 // start, 3 = something failed, 4 = a macro was running or recording.
 int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir, QTextStream& out);
 
-// Compares two backup folders: state fields, macros, stills. Returns 0 when
-// they match, 1 when they differ, 2 when a folder can't be read.
+// Compares two backup folders: state fields, macros, stills. Both must be
+// complete and pass validateBackup. Returns 0 when they match, 1 when they
+// differ, 2 when either can't be read or isn't complete (not comparable).
 int compareBackups(const QString& dirA, const QString& dirB, QTextStream& out);
+
+// A backup checked from end to end: the manifest's format, version and
+// completeness, every slot entry (index unique and inside the pool, the
+// metadata a restore needs), every file against its size and checksum, and
+// the state. Missing or wrongly typed information fails; it never reads as
+// an empty pool.
+struct ValidBackup {
+    QJsonObject manifest;
+    std::map<int, QByteArray> macroBytes, stillBytes;     // by slot
+    std::vector<std::pair<QString, QString>> state;       // name, hex
+};
+bool validateBackup(const QString& dir, ValidBackup* backup, QString* why);

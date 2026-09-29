@@ -206,7 +206,7 @@ static void inputsFromJson(const QJsonArray& a, Atem::InputSnap (&inputs)[4])
 
 void MainWindow::saveMacros()
 {
-    if (m_options.reference) return;
+    if (m_options.reference || !m_macroFileError.isEmpty()) return;
     QJsonArray arr;
     for (int i = 0; i < m_device.macroCount(); ++i) {
         const emu::Macro& mac = m_device.macro(i);
@@ -217,6 +217,9 @@ void MainWindow::saveMacros()
             {"name",        mac.name},
             {"description", mac.description},
             {"steps",       mac.opsToJson()},
+            // The macro exactly as a client uploaded it (or the profile has
+            // it): ops the emulator doesn't decode yet are only here.
+            {"bytes",       QString::fromLatin1(mac.bytes.toHex())},
             {"extras", QJsonObject{
                 {"captured", x.captured},
                 {"lockSize", x.lockSize},
@@ -278,20 +281,30 @@ static QList<emu::MacroOp> convertV1Macro(const QJsonObject& o, double frameMs)
 bool MainWindow::loadMacros()
 {
     QFile f(macroDataPath());
-    if (!f.open(QIODevice::ReadOnly)) return false;
+    if (!f.exists()) return false;
+    if (!f.open(QIODevice::ReadOnly)) {
+        m_macroFileError = f.errorString();
+        return false;
+    }
     QByteArray raw = f.readAll();
     f.close();
-    QJsonDocument doc = QJsonDocument::fromJson(raw);
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(raw, &parseError);
 
+    // A file this version can't read is left exactly as it is: the pool
+    // starts from the profile and nothing is saved over the file.
     QJsonArray entries;
     bool v1 = doc.isArray();
     if (v1) {
         entries = doc.array();
         QFile::remove(QFileInfo(f).absolutePath() + "/macros-v1.json");
         QFile::copy(macroDataPath(), QFileInfo(f).absolutePath() + "/macros-v1.json");
-    } else if (doc.isObject() && doc.object()["version"].toInt() == 2) {
+    } else if (doc.isObject() && doc.object()["version"].toInt() == 2 && doc.object()["macros"].isArray()) {
         entries = doc.object()["macros"].toArray();
     } else {
+        m_macroFileError = doc.isNull() ? "not JSON (" + parseError.errorString() + ")"
+                         : doc.isObject() && doc.object()["version"].toInt() > 2 ? "saved by a newer version"
+                                                                                   : "not a macro file this version reads";
         return false;
     }
 
@@ -321,6 +334,7 @@ bool MainWindow::loadMacros()
             inputsFromJson(sj["inputs"].toArray(), x.inputs);
         } else {
             mac.ops = emu::Macro::opsFromJson(o["steps"].toArray());
+            mac.bytes = QByteArray::fromHex(o["bytes"].toString().toLatin1());
             QJsonObject xj = o["extras"].toObject();
             x.captured = xj["captured"].toBool();
             x.lockSize = xj["lockSize"].toBool(true);
@@ -421,6 +435,9 @@ MainWindow::MainWindow(const EmulatorOptions& options, QWidget* parent)
     if (!m_options.reference) loadMacros();
 
     buildUi();
+    if (!m_macroFileError.isEmpty())
+        uiLog("ERROR: " + QDir::toNativeSeparators(macroDataPath()) + " can't be read (" + m_macroFileError +
+              "): the profile's macros are used, and nothing is saved over the file this session");
 
     connect(&m_device, &emu::Device::log, this, &MainWindow::onLogMessage);
     connect(&m_server, &emu::Server::log, this, &MainWindow::onLogMessage);
@@ -443,6 +460,7 @@ MainWindow::MainWindow(const EmulatorOptions& options, QWidget* parent)
     connect(&m_device, &emu::Device::macroPoolChanged, &m_saveTimer, qOverload<>(&QTimer::start));
 
     m_refreshTimer = new QTimer(this);
+    m_refreshTimer->setTimerType(Qt::PreciseTimer);   // a coarse timer gives ~22 fps instead of 30
     connect(m_refreshTimer, &QTimer::timeout, this, &MainWindow::onRefreshPreview);
     m_refreshTimer->start(33);
 
@@ -964,6 +982,21 @@ void MainWindow::buildUi()
 void MainWindow::onWebcamToggle()
 {
     if (!m_webcamActive) {
+        // One emulator drives the camera at a time (the frame's name is fixed).
+        HANDLE producer = CreateMutexA(nullptr, FALSE, kProducerMutexName);
+        DWORD owned = producer ? WaitForSingleObject(producer, 0) : WAIT_FAILED;
+        if (owned != WAIT_OBJECT_0 && owned != WAIT_ABANDONED) {
+            if (producer) CloseHandle(producer);
+            uiLog("VCam: another emulator's virtual camera is on: turn it off there first");
+            return;
+        }
+        m_vcamProducer = producer;
+        auto releaseProducer = [this] {
+            ReleaseMutex((HANDLE)m_vcamProducer);
+            CloseHandle((HANDLE)m_vcamProducer);
+            m_vcamProducer = nullptr;
+        };
+
         // Create shared memory that the DLL (loaded in OBS/Zoom) will read
         HANDLE hMem = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr,
                                          PAGE_READWRITE, 0,
@@ -971,14 +1004,31 @@ void MainWindow::onWebcamToggle()
                                          kSharedMemName);
         if (!hMem) {
             uiLog("VCam: failed to create shared memory");
+            releaseProducer();
             return;
         }
         m_vcamSharedMem = hMem;
         m_vcamFrame = MapViewOfFile(hMem, FILE_MAP_WRITE, 0, 0, 0);
-        if (!m_vcamFrame) {
-            uiLog("VCam: failed to map shared memory");
-            CloseHandle(hMem); m_vcamSharedMem = nullptr; return;
+        // A camera still open in a program keeps the memory alive; from an
+        // older build it can be too small for this frame.
+        MEMORY_BASIC_INFORMATION info = {};
+        if (!m_vcamFrame || !VirtualQuery(m_vcamFrame, &info, sizeof(info)) || info.RegionSize < sizeof(VCamSharedFrame)) {
+            uiLog(m_vcamFrame ? "VCam: an older virtual camera is still open in a program (OBS, Zoom): close it there first"
+                              : "VCam: failed to map shared memory");
+            if (m_vcamFrame) UnmapViewOfFile(m_vcamFrame);
+            m_vcamFrame = nullptr;
+            CloseHandle(hMem); m_vcamSharedMem = nullptr;
+            releaseProducer();
+            return;
         }
+        auto* shared = static_cast<VCamSharedFrame*>(m_vcamFrame);
+        shared->width = kVCamWidth;
+        shared->height = kVCamHeight;
+        shared->size = sizeof(VCamSharedFrame);
+        shared->version = kVCamVersion;
+        if (shared->sequence & 1) InterlockedIncrement(&shared->sequence);   // a producer stopped mid-frame
+        MemoryBarrier();
+        shared->magic = kVCamMagic;
 
         m_vcamEvent = CreateEventA(nullptr, FALSE, FALSE, kSharedEventName);
 
@@ -1015,6 +1065,11 @@ void MainWindow::onWebcamToggle()
         if (m_vcamFrame)    { UnmapViewOfFile(m_vcamFrame);             m_vcamFrame     = nullptr; }
         if (m_vcamSharedMem){ CloseHandle((HANDLE)m_vcamSharedMem);     m_vcamSharedMem = nullptr; }
         if (m_vcamEvent)    { CloseHandle((HANDLE)m_vcamEvent);         m_vcamEvent     = nullptr; }
+        if (m_vcamProducer) {
+            ReleaseMutex((HANDLE)m_vcamProducer);
+            CloseHandle((HANDLE)m_vcamProducer);
+            m_vcamProducer = nullptr;
+        }
 
         m_webcamActive = false;
         updateVCamButtons();
@@ -1032,10 +1087,11 @@ void MainWindow::pushWebcamFrame(const QImage& img)
                             Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
                     .convertToFormat(QImage::Format_RGB32);
 
-    f->width  = kVCamWidth;
-    f->height = kVCamHeight;
+    // Odd sequence while writing, even once the frame is whole: a reader
+    // that sees the same even number before and after its copy has a frame.
+    InterlockedIncrement(&f->sequence);
     memcpy(f->bgra, src.constBits(), qMin((int)sizeof(f->bgra), (int)src.sizeInBytes()));
-    InterlockedIncrement(&f->frameId);  // atomic increment — DLL reads this
+    InterlockedIncrement(&f->sequence);
     if (m_vcamEvent) SetEvent((HANDLE)m_vcamEvent);
 }
 
@@ -1240,6 +1296,7 @@ void MainWindow::onInputColorPick(int i)
                                       QString("Camera %1 Colour").arg(i+1));
     if (!c.isValid()) return;
     m_sources[i]->setColor(c); m_useVideo[i] = false; m_usePhoto[i] = false;
+    m_videoSources[i]->stop();   // no decoding for a camera that shows a colour
     updateColorBtnStyle(i);
     if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText("Media");
     uiLog(QString("CAM%1 colour → %2").arg(i+1).arg(c.name()));
@@ -1258,9 +1315,11 @@ void MainWindow::onInputMediaBrowse(int i)
     if (imgs.contains(ext)) {
         if (!m_photoSources[i]->loadFile(path)) { uiLog(QString("CAM%1: failed to load image").arg(i+1)); return; }
         m_usePhoto[i] = true; m_useVideo[i] = false;
+        m_videoSources[i]->stop();
         uiLog(QString("CAM%1 photo → %2").arg(i+1).arg(fn));
     } else {
-        m_videoSources[i]->loadFile(path); m_useVideo[i] = true; m_usePhoto[i] = false;
+        if (!m_videoSources[i]->loadFile(path)) { uiLog(QString("CAM%1: failed to open video %2").arg(i+1).arg(fn)); return; }
+        m_useVideo[i] = true; m_usePhoto[i] = false;
         uiLog(QString("CAM%1 video → %2").arg(i+1).arg(fn));
     }
     if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(fn.left(8));
@@ -1332,6 +1391,7 @@ void MainWindow::onMacroSaveOutput()
     if (mac.name.isEmpty()) mac.name = QString("Macro %1").arg(slot + 1);
     mac.used = true;
     mac.ops.clear();
+    mac.bytes.clear();   // the old bytes described the old macro: downloads are made from the new steps
     auto op = [&](const char* name, const QByteArray& data) { mac.ops.append({emu::MacroOp::Command, name, data, 0}); };
     op("CPgI", programInput(0, v.program));
     op("CKTp", keyType(0, 0, v.keyType));
@@ -1401,15 +1461,29 @@ void MainWindow::applyMacroExtras(int slot)
         if (inp.mode == Atem::InputMode::SolidColor) {
             m_sources[i]->setColor(QColor::fromRgba(inp.argb));
             m_useVideo[i] = false; m_usePhoto[i] = false;
+            m_videoSources[i]->stop();
             updateColorBtnStyle(i);
             if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText("Media");
         } else if (inp.mode == Atem::InputMode::Photo) {
-            if (m_photoSources[i]->loadFile(inp.path))
-                { m_usePhoto[i] = true; m_useVideo[i] = false;
-                  if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(QFileInfo(inp.path).fileName().left(8)); }
+            // Already showing it: not decoded and scaled again on every run.
+            if (m_usePhoto[i] && m_photoSources[i]->path() == inp.path) continue;
+            if (m_photoSources[i]->loadFile(inp.path)) {
+                m_usePhoto[i] = true; m_useVideo[i] = false;
+                m_videoSources[i]->stop();
+                if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(QFileInfo(inp.path).fileName().left(8));
+            } else {
+                uiLog(QString("CAM%1: the macro's picture %2 can't be loaded: the camera keeps what it shows")
+                          .arg(i + 1).arg(QDir::toNativeSeparators(inp.path)));
+            }
         } else {
-            m_videoSources[i]->loadFile(inp.path); m_useVideo[i] = true; m_usePhoto[i] = false;
-            if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(QFileInfo(inp.path).fileName().left(8));
+            if (m_useVideo[i] && m_videoSources[i]->filePath() == inp.path) continue;
+            if (m_videoSources[i]->loadFile(inp.path)) {
+                m_useVideo[i] = true; m_usePhoto[i] = false;
+                if (m_pgmMediaBtn[i]) m_pgmMediaBtn[i]->setText(QFileInfo(inp.path).fileName().left(8));
+            } else {
+                uiLog(QString("CAM%1: the macro's video %2 is missing: the camera keeps what it shows")
+                          .arg(i + 1).arg(QDir::toNativeSeparators(inp.path)));
+            }
         }
     }
     syncKeyerUi();
@@ -1617,9 +1691,9 @@ void MainWindow::onNetworkToggle(bool on)
             m_statusLabel->setStyleSheet("color:#333;font-size:10px;");
             uiLog("Network binding started");
         } else {
-            m_statusLabel->setText("  ✗  UDP port 9910 in use — close other instances");
+            m_statusLabel->setText(QString("  ✗  Cannot listen on UDP %1:9910 — %2").arg(m_options.listenAddress, error));
             m_statusLabel->setStyleSheet("color:#cc4444;font-size:10px;");
-            uiLog("Network: failed to bind UDP port 9910: " + error);
+            uiLog(QString("Network: cannot listen on UDP %1:9910: %2").arg(m_options.listenAddress, error));
         }
     } else {
         m_server.close();

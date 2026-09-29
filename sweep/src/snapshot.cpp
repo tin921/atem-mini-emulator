@@ -177,10 +177,26 @@ Snapshot* takeSnapshot(Switcher& s) {
     return snap;
 }
 
-// Everything in `after` that differs from `before` (settings read at the start only).
+QStringList snapshotUnread(const Snapshot* snap) {
+    QStringList out = snap->unread;
+    for (const auto& n : snap->names)
+        if (!n.read) out << "input names";
+    return out;
+}
+
+// Everything in `after` that differs from `before` (settings read at the
+// start only). A setting that can't be read back is "not verified", never
+// "matches".
 static QStringList differences(const Snapshot& before, const Snapshot& after) {
     QStringList out;
-    auto skip = [&](const char* what) { return before.unread.contains(what); };
+    auto skip = [&](const char* what) {
+        if (before.unread.contains(what)) return true;
+        if (after.unread.contains(what)) {
+            out << QString("%1: could not be read back").arg(what);
+            return true;
+        }
+        return false;
+    };
     auto num = [&](const char* what, double a, double b) {
         if (!skip(what) && std::abs(a - b) > 1e-3) out << QString("%1: now %2, was %3").arg(what).arg(b).arg(a);
     };
@@ -240,14 +256,21 @@ static QStringList differences(const Snapshot& before, const Snapshot& after) {
     num("DSK mask bottom", before.dskMask[1], after.dskMask[1]);
     num("DSK mask left", before.dskMask[2], after.dskMask[2]);
     num("DSK mask right", before.dskMask[3], after.dskMask[3]);
+    if (before.names.size() != after.names.size())
+        out << QString("inputs: now %1, were %2").arg(after.names.size()).arg(before.names.size());
     for (size_t i = 0; i < before.names.size() && i < after.names.size(); ++i) {
         const auto& a = before.names[i];
         const auto& b = after.names[i];
         if (!a.read) continue;
+        if (!b.read) {
+            out << QString("input names (\"%1\"): could not be read back").arg(a.longName);
+            continue;
+        }
         if (a.isDefault != b.isDefault || (!a.isDefault && (a.longName != b.longName || a.shortName != b.shortName)))
             out << QString("input names: now \"%1\"/\"%2\", was \"%3\"/\"%4\"").arg(b.longName, b.shortName, a.longName, a.shortName);
     }
     val("macro loop", before.macroLoop, after.macroLoop);
+    if (before.player && !after.player) out << "media player: could not be read back";
     if (before.player && after.player) {
         val("media player source", before.playerType, after.playerType);
         val("media player source", before.playerIndex, after.playerIndex);

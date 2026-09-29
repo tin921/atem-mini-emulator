@@ -76,6 +76,9 @@ private:
     void uiLog(const QString& msg);
     void saveMacros();
     bool loadMacros();   // returns true if a saved macro pool was loaded
+    // macros.json exists but can't be read (damaged, or from a newer version):
+    // nothing is saved over it this session. The reason, for the log.
+    QString m_macroFileError;
     static QString macroDataPath();
     void setProgramSource(quint16 src);
     void syncProgramButtons();
@@ -167,6 +170,7 @@ private:
     void*        m_vcamSharedMem  = nullptr;
     void*        m_vcamFrame      = nullptr;
     void*        m_vcamEvent      = nullptr;
+    void*        m_vcamProducer   = nullptr;   // named mutex: one emulator drives the camera
     bool         m_vcamRegistered = false;
     bool         m_webcamActive   = false;
     QPushButton* m_vcamOnBtn      = nullptr;

@@ -111,6 +111,11 @@ public:
     // switcher sends nothing back for commands it rejects.
     FieldList handle(const QByteArray& name, const QByteArray& data);
     bool knows(const QByteArray& name) const { return m_handlers.contains(name); }
+    // Which connection the next commands come from (0: the local UI). File
+    // transfers and the media lock belong to it; clientGone() drops what a
+    // connection left behind (its transfers, a lock it held).
+    void setCaller(quint32 caller) { m_caller = caller; }
+    void clientGone(quint32 caller);
     // Called after all commands of a packet: a macro started in the packet
     // runs now, so a stop in the same packet cancels it (as on the device).
     FieldList endOfPacket();
@@ -124,7 +129,7 @@ public:
     QList<InputInfo> inputs() const;
     // Colour generator N (1 or 2) as hue (degrees), saturation, luma (0..1).
     bool colorGenerator(int index, double* hue, double* saturation, double* luma) const;
-    double frameIntervalMs() const { return m_frameTimer.interval(); }
+    double frameIntervalMs() const { return 1000.0 / m_fps; }   // nominal (23.98 fps: 41.71 ms)
 
     // Macro pool (the switcher's stored macros)
     int macroCount() const { return m_pool.size(); }
@@ -155,8 +160,9 @@ private:
     void reply(const char* name, const QByteArray& data);   // to the client that sent the command
 
     // File transfers (macros, stills) and the media pool
-    void sendChunks(quint16 id);
-    void finishUpload(quint16 id);
+    quint64 transferKey(quint16 id) const { return static_cast<quint64>(m_caller) << 16 | id; }
+    void sendChunks(quint64 key);
+    void finishUpload(quint64 key);
     QByteArray* stillField(int index);
     bool stillValid(int index) const;
     QByteArray stillBytes(int index) const;
@@ -194,6 +200,7 @@ private:
     void startAnimation(const QString& id, int frames, std::function<void(int frame)> step,
                         std::function<void()> done);
     void tick();
+    void scheduleTick();   // the next frame on the nominal clock (no drift from whole milliseconds)
 
     FieldStore m_store;
     QHash<QByteArray, Handler> m_handlers;
@@ -216,7 +223,9 @@ private:
         qint64 unpacked = 0;        //   and their size once unpacked
         QByteArray name, description, hash;
     };
-    QHash<quint16, Transfer> m_transfers;
+    QHash<quint64, Transfer> m_transfers;  // by connection and transfer id (transferKey)
+    quint32 m_caller = 0;
+    QHash<quint16, quint32> m_lockOwner;   // media store -> the connection that locked it
     QHash<int, QByteArray> m_stillData;   // uploaded stills (RLE, as transferred)
     int m_captures = 0;
     int m_pendingMacro = -1;              // started in the current packet
@@ -232,6 +241,9 @@ private:
     };
     QMap<QString, Animation> m_animations;
     QTimer m_frameTimer;
+    double m_fps = 25;                    // the profile's video mode
+    QElapsedTimer m_frameClock;           // since the animations started
+    qint64 m_frameCount = 0;              // frames scheduled since then
     QElapsedTimer m_uptime;   // the time code counts from start-up
 };
 

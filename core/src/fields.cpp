@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QHash>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTextStream>
 
@@ -19,7 +20,10 @@ bool FieldStore::load(const QString& path, QString* error) {
         if (error) *error = "cannot open " + path;
         return false;
     }
-    m_fields.clear();
+    // Read into a new list: the current state is only replaced by a dump that
+    // is whole and valid.
+    static const QRegularExpression hex("^(?:[0-9a-fA-F]{2})*$");
+    std::vector<Field> fields;
     QTextStream in(&file);
     int lineNo = 0;
     while (!in.atEnd()) {
@@ -31,12 +35,17 @@ bool FieldStore::load(const QString& path, QString* error) {
             if (error) *error = QString("%1:%2: expected NAME HEX").arg(path).arg(lineNo);
             return false;
         }
-        m_fields.push_back({ parts[0].toLatin1(), QByteArray::fromHex(parts[1].toLatin1()) });
+        if (!hex.match(parts[1]).hasMatch()) {
+            if (error) *error = QString("%1:%2: the data is not whole bytes of hex").arg(path).arg(lineNo);
+            return false;
+        }
+        fields.push_back({ parts[0].toLatin1(), QByteArray::fromHex(parts[1].toLatin1()) });
     }
-    if (m_fields.empty() || m_fields.back().name != "InCm") {
+    if (fields.empty() || fields.back().name != "InCm") {
         if (error) *error = path + ": the dump must end with InCm";
         return false;
     }
+    m_fields = std::move(fields);
     return true;
 }
 
@@ -87,11 +96,17 @@ const QByteArray* FieldStore::findInstance(const Field& field) const {
     return nullptr;
 }
 
+// The same identity as findInstance(): for media slots and Fairlight sources
+// the leading bytes alone would pick the wrong instance.
 bool FieldStore::replace(const Field& field) {
-    QByteArray* stored = find(field.name.constData(), field.data.left(keyLength(field.name)));
-    if (!stored) return false;
-    *stored = field.data;
-    return true;
+    const QByteArray key = instanceKey(field);
+    for (auto& f : m_fields) {
+        if (f.name == field.name && instanceKey(f) == key) {
+            f.data = field.data;
+            return true;
+        }
+    }
+    return false;
 }
 
 FieldList FieldStore::dump() const {

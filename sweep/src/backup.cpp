@@ -11,6 +11,7 @@
 #include <QSaveFile>
 #include <QThread>
 #include <atomic>
+#include <functional>
 #include <condition_variable>
 #include <map>
 #include <mutex>
@@ -151,14 +152,22 @@ int takeBackup(Switcher& s, WireProxy* wire, const QString& connectAddress, cons
             });
         SDK_CALL(IBMDSwitcherMacroPool, s.pool, AddCallback, sink);
         for (unsigned int i = 0; i < maxMacros; ++i) {
+            // A slot that can't be read is not an empty slot: a restore from
+            // this backup would delete whatever is there.
             BOOL valid = FALSE;
-            if (FAILED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, IsValid, i, &valid)) || !valid) continue;
+            if (FAILED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, IsValid, i, &valid))) {
+                problems << QString("macro %1: could not read whether the slot is in use").arg(i);
+                continue;
+            }
+            if (!valid) continue;
             QJsonObject m;
             m["index"] = static_cast<int>(i);
             BSTR b = nullptr;
             if (SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetName, i, &b))) m["name"] = takeBstr(b);
+            else problems << QString("macro %1: could not read its name").arg(i);
             b = nullptr;
             if (SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetDescription, i, &b))) m["description"] = takeBstr(b);
+            else problems << QString("macro %1: could not read its description").arg(i);
             BOOL unsupported = FALSE;
             if (SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, HasUnsupportedOps, i, &unsupported)))
                 m["hasUnsupportedOps"] = unsupported == TRUE;
@@ -228,14 +237,20 @@ int takeBackup(Switcher& s, WireProxy* wire, const QString& connectAddress, cons
         if (!locked) problems << "could not lock the stills for downloading";
         for (unsigned int i = 0; i < stillCount; ++i) {
             BOOL valid = FALSE;
-            if (FAILED(SDK_CALL(IBMDSwitcherStills, st.p, IsValid, i, &valid)) || !valid) continue;
+            if (FAILED(SDK_CALL(IBMDSwitcherStills, st.p, IsValid, i, &valid))) {
+                problems << QString("still %1: could not read whether the slot is in use").arg(i);
+                continue;
+            }
+            if (!valid) continue;
             QJsonObject m;
             m["index"] = static_cast<int>(i);
             BSTR b = nullptr;
             if (SUCCEEDED(SDK_CALL(IBMDSwitcherStills, st.p, GetName, i, &b))) m["name"] = takeBstr(b);
+            else problems << QString("still %1: could not read its name").arg(i);
             BMDSwitcherHash hash{};
             if (SUCCEEDED(SDK_CALL(IBMDSwitcherStills, st.p, GetHash, i, &hash)))
                 m["hash"] = QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(hash.data), 16).toHex());
+            else problems << QString("still %1: could not read its hash").arg(i);
             if (locked) {
                 wait.start(static_cast<int>(i));
                 HRESULT dh = SDK_CALL(IBMDSwitcherStills, st.p, Download, i);
@@ -287,38 +302,94 @@ int takeBackup(Switcher& s, WireProxy* wire, const QString& connectAddress, cons
     return problems.isEmpty() ? 0 : 3;
 }
 
-// ── Compare ──────────────────────────────────────────────────
+// ── Checking a backup ────────────────────────────────────────
 
 namespace {
 
-struct Backup {
-    QJsonObject manifest;
-    std::vector<std::pair<QString, QString>> state;   // name, hex
-    bool hasState = false;
-};
+QByteArray readFile(const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
 
-bool load(const QString& dir, Backup* b, QTextStream& out) {
+bool isInt(const QJsonValue& v) { return v.isDouble() && v.toDouble() == static_cast<double>(v.toInteger()); }
+bool isHex(const QJsonValue& v, int length) {
+    const QString t = v.toString();
+    return v.isString() && t.size() == length && QByteArray::fromHex(t.toLatin1()).toHex() == t.toLatin1();
+}
+
+} // namespace
+
+bool validateBackup(const QString& dir, ValidBackup* b, QString* why) {
+    auto fail = [&](const QString& reason) { *why = reason; return false; };
     QFile mf(dir + "/manifest.json");
-    if (!mf.open(QIODevice::ReadOnly)) {
-        out << "Cannot read " << QDir::toNativeSeparators(dir + "/manifest.json") << "\n";
-        return false;
-    }
-    b->manifest = QJsonDocument::fromJson(mf.readAll()).object();
-    if (b->manifest["format"].toString() != "atem-sweep-backup") {
-        out << QDir::toNativeSeparators(dir) << " is not an atem-sweep backup\n";
-        return false;
-    }
-    QFile sf(dir + "/state.txt");
-    if (sf.open(QIODevice::ReadOnly)) {
-        b->hasState = true;
-        for (const QByteArray& line : sf.readAll().split('\n')) {
-            if (line.isEmpty() || line.startsWith('#')) continue;
-            int sp = line.indexOf(' ');
-            b->state.emplace_back(QString::fromLatin1(line.left(sp)), QString::fromLatin1(line.mid(sp + 1)));
+    if (!mf.open(QIODevice::ReadOnly)) return fail("cannot read manifest.json");
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(mf.readAll(), &err);
+    if (!doc.isObject()) return fail("manifest.json is not a JSON object: " + err.errorString());
+    const QJsonObject m = doc.object();
+    if (m["format"].toString() != "atem-sweep-backup") return fail("not an atem-sweep backup");
+    if (!isInt(m["version"]) || m["version"].toInt() != 1) return fail("unsupported backup version");
+    if (!m["complete"].isBool() || !m["complete"].toBool()) return fail("the backup is not complete");
+    if (!m["product"].isString() || m["product"].toString().isEmpty()) return fail("no product name");
+    if (!isInt(m["macroSlots"]) || m["macroSlots"].toInt() < 0 || !isInt(m["stillSlots"]) || m["stillSlots"].toInt() < 0)
+        return fail("no slot counts");
+    if (!m["macros"].isArray() || !m["stills"].isArray()) return fail("no macro or still list");
+    const QJsonObject state = m["state"].toObject();
+    if (!state["included"].toBool() || !state["complete"].toBool() || !isInt(state["fields"]) || state["fields"].toInt() <= 0)
+        return fail("no complete switcher state");
+
+    b->manifest = m;
+    b->macroBytes.clear();
+    b->stillBytes.clear();
+    b->state.clear();
+    auto checkSlots = [&](const char* key, int count, const char* dirName, const char* ext,
+                     std::map<int, QByteArray>* bytes, const std::function<QString(const QJsonObject&)>& check) -> QString {
+        for (const QJsonValue& v : m[key].toArray()) {
+            if (!v.isObject()) return QString("%1: an entry is not an object").arg(key);
+            const QJsonObject e = v.toObject();
+            if (!isInt(e["index"]) || e["index"].toInt() < 0 || e["index"].toInt() >= count)
+                return QString("%1: slot index missing or outside the pool").arg(key);
+            const int i = e["index"].toInt();
+            if (bytes->count(i)) return QString("%1: slot %2 listed twice").arg(key).arg(i);
+            if (!e["name"].isString()) return QString("%1 %2: no name").arg(key).arg(i);
+            if (!isHex(e["sha256"], 64) || !isInt(e["size"])) return QString("%1 %2: no checksum or size").arg(key).arg(i);
+            if (QString problem = check(e); !problem.isEmpty()) return QString("%1 %2: %3").arg(key).arg(i).arg(problem);
+            QByteArray data = readFile(slotFile(dir + "/" + dirName, i, ext));
+            if (data.isEmpty() || data.size() != e["size"].toInt() || sha256(data) != e["sha256"].toString())
+                return QString("%1 %2: its file is missing or damaged").arg(key).arg(i);
+            (*bytes)[i] = data;
         }
+        return {};
+    };
+    QString problem = checkSlots("macros", m["macroSlots"].toInt(), "macros", "bin", &b->macroBytes, [](const QJsonObject& e) {
+        return e["description"].isString() ? QString() : QString("no description");
+    });
+    if (problem.isEmpty())
+        problem = checkSlots("stills", m["stillSlots"].toInt(), "stills", "raw", &b->stillBytes, [](const QJsonObject& e) {
+            if (!isHex(e["hash"], 32)) return QString("no switcher hash");
+            if (!isInt(e["width"]) || !isInt(e["height"]) || !isInt(e["rowBytes"]) || e["width"].toInt() <= 0 ||
+                e["height"].toInt() <= 0 || e["rowBytes"].toInt() <= 0 || e["pixelFormat"].toString().size() != 4)
+                return QString("no frame format");
+            if (e["size"].toInt() != e["rowBytes"].toInt() * e["height"].toInt()) return QString("size doesn't match the frame");
+            return QString();
+        });
+    if (!problem.isEmpty()) return fail(problem);
+
+    QFile sf(dir + "/state.txt");
+    if (!sf.open(QIODevice::ReadOnly)) return fail("cannot read state.txt");
+    for (const QByteArray& line : sf.readAll().split('\n')) {
+        if (line.isEmpty() || line.startsWith('#')) continue;
+        int sp = line.indexOf(' ');
+        if (sp != 4) return fail("state.txt: a line is not NAME HEX");
+        b->state.emplace_back(QString::fromLatin1(line.left(sp)), QString::fromLatin1(line.mid(sp + 1)));
     }
+    if (static_cast<int>(b->state.size()) != state["fields"].toInt()) return fail("state.txt doesn't hold the fields the manifest lists");
     return true;
 }
+
+// ── Compare ──────────────────────────────────────────────────
+
+namespace {
 
 std::map<int, QJsonObject> bySlot(const QJsonArray& a) {
     std::map<int, QJsonObject> m;
@@ -331,13 +402,21 @@ QString shortHex(const QString& hex) { return hex.size() > 48 ? hex.left(48) + "
 } // namespace
 
 int compareBackups(const QString& dirA, const QString& dirB, QTextStream& out) {
-    Backup a, b;
-    if (!load(dirA, &a, out) || !load(dirB, &b, out)) return 2;
+    // Only complete, checked backups are compared: missing information is
+    // "not comparable", never "identical".
+    ValidBackup a, b;
+    for (auto [dir, backup] : { std::pair{ &dirA, &a }, std::pair{ &dirB, &b } }) {
+        QString why;
+        if (!validateBackup(*dir, backup, &why)) {
+            out << "Not comparable: " << QDir::toNativeSeparators(*dir) << ": " << why << "\n";
+            return 2;
+        }
+    }
     int differences = 0;
     auto diff = [&](const QString& text) { out << "  " << text << "\n"; ++differences; };
 
     // State: fields compared by name and occurrence (the 3rd "KeBP" with the 3rd "KeBP").
-    if (a.hasState && b.hasState) {
+    {
         auto keyed = [](const std::vector<std::pair<QString, QString>>& state) {
             std::map<QString, QString> m;
             std::map<QString, int> seen;
@@ -353,8 +432,6 @@ int compareBackups(const QString& dirA, const QString& dirB, QTextStream& out) {
         }
         for (const auto& [k, v] : kb)
             if (!ka.count(k)) diff(k + " only in the second");
-    } else {
-        out << "State: not compared (" << (a.hasState ? "second" : "first") << " backup has none)\n";
     }
 
     auto compareSlots = [&](const char* what, const char* key) {
@@ -391,11 +468,6 @@ uint32_t fromFourcc(const QString& s) {
     return (uint32_t(uchar(b[0])) << 24) | (uint32_t(uchar(b[1])) << 16) | (uint32_t(uchar(b[2])) << 8) | uchar(b[3]);
 }
 
-QByteArray readFile(const QString& path) {
-    QFile f(path);
-    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
-}
-
 // Downloads one stored macro's bytes (the pool callback must feed `wait`).
 QString downloadMacro(IBMDSwitcherMacroPool* pool, unsigned int i, TransferWait& wait, QByteArray* data) {
     wait.start(static_cast<int>(i));
@@ -420,41 +492,21 @@ QString hashHex(const BMDSwitcherHash& hash) {
 } // namespace
 
 int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir, QTextStream& out) {
-    QFile mf(dir + "/manifest.json");
-    if (!mf.open(QIODevice::ReadOnly)) {
-        out << "Cannot read " << QDir::toNativeSeparators(dir + "/manifest.json") << "\n";
+    // The whole backup is checked before connecting: a manifest that is
+    // incomplete, malformed or doesn't match its files changes nothing (a
+    // missing list must never read as "delete everything").
+    ValidBackup backup;
+    QString why;
+    if (!validateBackup(dir, &backup, &why)) {
+        out << "Not a usable backup: " << QDir::toNativeSeparators(dir) << ": " << why << ": nothing restored\n";
         return 2;
     }
-    QJsonObject manifest = QJsonDocument::fromJson(mf.readAll()).object();
-    if (manifest["format"].toString() != "atem-sweep-backup" || !manifest["complete"].toBool()) {
-        out << "Not a complete atem-sweep backup: " << QDir::toNativeSeparators(dir) << "\n";
-        return 2;
-    }
-    // Every file must match its checksum before anything is written.
+    const QJsonObject& manifest = backup.manifest;
     std::map<int, QJsonObject> macrosIn, stillsIn;
-    std::map<int, QByteArray> macroBytes, stillBytes;
-    for (const auto& v : manifest["macros"].toArray()) {
-        QJsonObject m = v.toObject();
-        int i = m["index"].toInt();
-        QByteArray data = readFile(slotFile(dir + "/macros", i, "bin"));
-        if (data.isEmpty() || sha256(data) != m["sha256"].toString()) {
-            out << "Backup file for macro " << i << " is missing or damaged: nothing restored\n";
-            return 2;
-        }
-        macrosIn[i] = m;
-        macroBytes[i] = data;
-    }
-    for (const auto& v : manifest["stills"].toArray()) {
-        QJsonObject m = v.toObject();
-        int i = m["index"].toInt();
-        QByteArray data = readFile(slotFile(dir + "/stills", i, "raw"));
-        if (data.isEmpty() || sha256(data) != m["sha256"].toString()) {
-            out << "Backup file for still " << i << " is missing or damaged: nothing restored\n";
-            return 2;
-        }
-        stillsIn[i] = m;
-        stillBytes[i] = data;
-    }
+    for (const auto& v : manifest["macros"].toArray()) macrosIn[v.toObject()["index"].toInt()] = v.toObject();
+    for (const auto& v : manifest["stills"].toArray()) stillsIn[v.toObject()["index"].toInt()] = v.toObject();
+    std::map<int, QByteArray>& macroBytes = backup.macroBytes;
+    std::map<int, QByteArray>& stillBytes = backup.stillBytes;
 
     BMDSwitcherConnectToFailure fail = bmdSwitcherConnectToFailureNoResponse;
     HRESULT hr = s.connect(connectAddress, &fail);
@@ -467,6 +519,22 @@ int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir
     if (product != manifest["product"].toString()) {
         out << "The backup is of a " << manifest["product"].toString() << ", this is a " << product << ": nothing restored\n";
         return 2;
+    }
+    // The pools must be the ones the backup was taken from.
+    {
+        unsigned int macroSlots = 0, stillSlots = 0;
+        Ref<IBMDSwitcherMediaPool> mp;
+        Ref<IBMDSwitcherStills> sp;
+        bool read = s.pool && SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetMaxCount, &macroSlots)) &&
+                    SUCCEEDED(s.sw->QueryInterface(__uuidof(IBMDSwitcherMediaPool), reinterpret_cast<void**>(mp.out()))) && mp &&
+                    SUCCEEDED(SDK_CALL(IBMDSwitcherMediaPool, mp.p, GetStills, sp.out())) && sp &&
+                    SUCCEEDED(SDK_CALL(IBMDSwitcherStills, sp.p, GetCount, &stillSlots));
+        if (!read || static_cast<int>(macroSlots) != manifest["macroSlots"].toInt() ||
+            static_cast<int>(stillSlots) != manifest["stillSlots"].toInt()) {
+            out << "The switcher's macro / still pools don't match the backup's (" << manifest["macroSlots"].toInt() << " / "
+                << manifest["stillSlots"].toInt() << "): nothing restored\n";
+            return 2;
+        }
     }
     if (s.macros) {
         BMDSwitcherMacroRunStatus run = bmdSwitcherMacroRunStatusIdle;
@@ -504,7 +572,10 @@ int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir
         SDK_CALL(IBMDSwitcherMacroPool, s.pool, AddCallback, sink);
         for (unsigned int i = 0; i < maxMacros; ++i) {
             BOOL valid = FALSE;
-            SDK_CALL(IBMDSwitcherMacroPool, s.pool, IsValid, i, &valid);
+            if (FAILED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, IsValid, i, &valid))) {
+                problems << QString("macro %1: could not read whether the slot is in use: left as it is").arg(i);
+                continue;
+            }
             auto want = macrosIn.find(static_cast<int>(i));
             if (want == macrosIn.end()) {
                 if (valid) {
@@ -583,7 +654,10 @@ int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir
         bool locked = false;
         for (unsigned int i = 0; i < stillCount; ++i) {
             BOOL valid = FALSE;
-            SDK_CALL(IBMDSwitcherStills, st.p, IsValid, i, &valid);
+            if (FAILED(SDK_CALL(IBMDSwitcherStills, st.p, IsValid, i, &valid))) {
+                problems << QString("still %1: could not read whether the slot is in use: left as it is").arg(i);
+                continue;
+            }
             auto want = stillsIn.find(static_cast<int>(i));
             if (want == stillsIn.end()) {
                 if (valid) {

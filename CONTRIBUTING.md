@@ -23,7 +23,8 @@ Contributions are welcome. Please read this before opening a pull request.
 1. Fork the repository
 2. Build the project following [docs/overview.md](docs/overview.md#build)
 3. Make your change on a feature branch
-4. Run the conformance check (`atem-sweep 127.0.0.2 --verify ...`, see
+4. Run the offline tests (`ctest -C Release` in `build-gui`) and the
+   conformance check (`atem-sweep 127.0.0.2 --verify ...`, see
    [docs/sweep.md](docs/sweep.md)) and test with the `obs-atem` plugin
    and/or ATEM Software Control
 5. Open a pull request describing what changed and why

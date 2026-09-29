@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QMutex>
+#include <QElapsedTimer>
 
 class Logger {
 public:
@@ -12,9 +13,12 @@ public:
 
 private:
     Logger() = default;
+    void rotate();                    // the current log becomes .1, a new one starts
+    QString     m_path;
     QFile       m_file;
     QTextStream m_stream;
     QMutex      m_mutex;
+    QElapsedTimer m_sinceFlush;
 };
 
 // Strip to filename only (works for both / and \ paths)

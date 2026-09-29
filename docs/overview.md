@@ -224,12 +224,16 @@ cmake --build build --config Release
 ```
 
 Outputs: `build-gui\Release\` — `atem-emulator.exe`, `AtemVirtualCam.dll`,
-the Qt runtime (`windeployqt6`) and `profiles\`;
+the Qt runtime (`windeployqt`), the Visual C++ runtime DLLs and `profiles\`,
+so the folder runs on a PC without Qt or Visual Studio;
 `build-gui\core\Release\atem-emu.exe`; `sweep\build\Release\` —
 `atem-sweep.exe`, `atem-sweep-gui.exe`.
 
+Offline tests: `ctest -C Release` in `build-gui` runs `atem-emu-tests`
+([core.md](core.md#build)).
+
 CMake targets: **`atem-emu-core`** (static library, `core/`, also builds
-`atem-emu`), **`AtemVirtualCam`** (the DirectShow DLL), **`atem-emulator`**
+`atem-emu` and `atem-emu-tests`), **`AtemVirtualCam`** (the DirectShow DLL), **`atem-emulator`**
 (the app; `/utf-8`, `NOMINMAX`; post-build `windeployqt6` and a copy of
 `core/profiles`); in `sweep/`, **`atem-sweep`** and **`atem-sweep-gui`**.
 

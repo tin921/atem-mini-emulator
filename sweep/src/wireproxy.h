@@ -4,6 +4,8 @@
 // Each packet's payload is split into ATEM fields (len, pad, 4CC, data), so a
 // test can report which commands it sent and which state fields came back.
 
+#include <QElapsedTimer>
+#include <QFile>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -42,7 +44,11 @@ public:
     std::vector<WirePacket> since(size_t from) const;
     // {"tx":[{"field":"CPgI","hex":"..."}], "rx":[...], "packets":n}
     QJsonObject fieldsSince(size_t from) const;
-    bool writeLog(const QString& path) const;
+    bool writeLog(const QString& path);
+    // Also append every packet to `path` + ".partial" as it is recorded
+    // (flushed about once a second): a crash or an interrupted capture keeps
+    // what came before. writeLog(path) then turns it into `path`.
+    bool startJournal(const QString& path, QString* error);
 
 protected:
     void run() override;
@@ -56,6 +62,9 @@ private:
 
     mutable std::mutex m_mutex;
     std::vector<WirePacket> m_packets;
+    QFile m_journal;                 // guarded by m_mutex
+    QString m_journalTarget;
+    QElapsedTimer m_sinceFlush;
     qint64 m_startMs = 0;
 
     std::mutex m_startMutex;

@@ -8,9 +8,10 @@ _vX interfaces and without callback interfaces, which a client implements
 rather than calls) gets exactly one category, in this order:
 
   supported (the ATEM Mini has it and it is safe)
-    1 emulator     emulated and verified: in the emulator verify run, every
-                   test that calls it passed (per-test "sdk" lists; a run
-                   without them counts as a whole and must have no failures)
+    1 emulator     recorded and verified: a --record run of the real ATEM
+                   called it, and in the emulator verify run it was called by
+                   at least one passing test and by no failing one (per-test
+                   "sdk" lists; skipped tests prove nothing either way)
     2 samples      used by the SDK samples (tier2-samples.txt), not yet in 1
     3 sweep        every other method the ATEM Mini has and that is safe
                    (2 and 3 say whether a --record run already recorded
@@ -41,15 +42,19 @@ def lines(name):
 
 
 def verified_methods(run):
-    """Methods whose every calling test passed (or the run's calls, if clean)."""
+    """Methods called by a passing test and by no failing or erroring one.
+    Skipped tests count neither way. Needs the per-test "sdk" lists."""
     tests = run.get('tests', [])
-    if any('sdk' in t for t in tests):
-        ok, bad = set(), set()
-        for t in tests:
-            (ok if t.get('status') in ('pass', 'skip') else bad).update(t.get('sdk', []))
-        return ok - bad, None
-    failed = sum(1 for t in tests if t.get('status') == 'fail')
-    return set(run['coverage']['called']), failed
+    if not any('sdk' in t for t in tests):
+        raise SystemExit('the verify run has no per-test SDK calls ("sdk"): run a current atem-sweep')
+    ok, bad = set(), set()
+    for t in tests:
+        status = t.get('status')
+        if status == 'pass':
+            ok.update(t.get('sdk', []))
+        elif status != 'skip':
+            bad.update(t.get('sdk', []))
+    return ok - bad
 
 
 def main():
@@ -62,11 +67,21 @@ def main():
     if not verify_path:
         ap.error('--verify is required')
 
+    if not a.record:
+        ap.error('--record is required: "verified" means the same calls were recorded on the real ATEM')
     verify = json.load(open(verify_path, encoding='utf-8'))
-    emulated, failed_whole_run = verified_methods(verify)
+    meta = verify.get('meta', {})
+    if meta.get('mode', 'verify') != 'verify':
+        ap.error(f'{verify_path} is a {meta.get("mode")} run, not an emulator verify run')
+    if meta.get('complete') is False or meta.get('stopped'):
+        ap.error(f'{verify_path} is a partial run (stopped, or not every planned test ran)')
     recorded = set()
     for path in a.record:
-        recorded |= set(json.load(open(path, encoding='utf-8'))['coverage']['called'])
+        run = json.load(open(path, encoding='utf-8'))
+        if run.get('meta', {}).get('mode') != 'record':
+            ap.error(f'{path} is not a record run of the real ATEM')
+        recorded |= set(run['coverage']['called'])
+    emulated = verified_methods(verify) & recorded
 
     api = json.load(open(os.path.join(HERE, 'sdk-api.json'), encoding='utf-8'))
     methods = [f'{i}::{m}' for i, ms in sorted(api.items())
@@ -115,13 +130,11 @@ def main():
             todo[key] = todo.get(key, 0) + 1
     name = lambda p: os.path.basename(os.path.dirname(os.path.abspath(p)))
     out = [f'SDK methods (current interfaces, callbacks excluded): {len(methods)}',
-           f'emulator verify run: {name(verify_path)}'
-           + (f' — WARNING: {failed_whole_run} failed tests and no per-test calls; category 1 assumes a passing run'
-              if failed_whole_run else ''),
+           f'emulator verify run: {name(verify_path)}',
            'real ATEM record runs: ' + (', '.join(name(p) for p in a.record) or 'none given'),
            '',
            f'supported    {len(supported):5}',
-           f'  1 emulator    {counts.get("1 emulator", 0):5}   recorded on the real ATEM, emulated and verified',
+           f'  1 emulator    {counts.get("1 emulator", 0):5}   recorded on the real ATEM, emulated and verified (a passing test, no failing one)',
            f'  2 samples     {counts.get("2 samples", 0):5}   used by the SDK samples, not yet emulated',
            f'  3 sweep       {counts.get("3 sweep", 0):5}   other safe ATEM Mini functions, not yet emulated',
            f'                       (2 + 3: {todo.get("recorded", 0)} recorded, emulator to do; '

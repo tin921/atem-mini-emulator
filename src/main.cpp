@@ -4,6 +4,8 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
+#include <QHostAddress>
+#include <QMessageBox>
 #include <QSurfaceFormat>
 #include <QTimer>
 
@@ -45,6 +47,10 @@ int main(int argc, char* argv[])
     EmulatorOptions options;
     options.profileDir = QDir::cleanPath(parser.value(profile));
     options.listenAddress = parser.value(listen);
+    if (QHostAddress(options.listenAddress).isNull()) {
+        QMessageBox::critical(nullptr, "ATEM Mini Emulator", "--listen " + options.listenAddress + " is not an IP address.");
+        return 2;
+    }
     options.reference = parser.isSet(reference);
 
     MainWindow w(options);

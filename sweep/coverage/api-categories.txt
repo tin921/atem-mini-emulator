@@ -1,11 +1,11 @@
 SDK methods (current interfaces, callbacks excluded): 1264
-emulator verify run: verify-core-20260929-034145
-real ATEM record runs: 20260928-234910-full-record
+emulator verify run: full-verify2
+real ATEM record runs: atem-mini_sdk10.2.1_proto2.30_2026-09-28
 
 supported      725
-  1 emulator      630   recorded on the real ATEM, emulated and verified
-  2 samples        15   used by the SDK samples, not yet emulated
-  3 sweep          10   other safe ATEM Mini functions, not yet emulated
+  1 emulator      630   recorded on the real ATEM, emulated and verified (a passing test, no failing one)
+  2 samples         8   used by the SDK samples, not yet emulated
+  3 sweep          17   other safe ATEM Mini functions, not yet emulated
                        (2 + 3: 24 recorded, emulator to do; 1 not recorded yet)
   4 hardware       70   need hardware this project lacks (HyperDeck, Blackmagic camera)
 unsupported    539

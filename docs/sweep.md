@@ -89,10 +89,24 @@ HDMI-out source, Fairlight audio, …) and **runs / stops the stored macros**.
 
 **Stored content** — macros and stills — is created, listed, changed and
 deleted only by the storage tests, and only inside a **backup-protected
-run**: a complete backup first (the storage tests are skipped otherwise),
-then the tests, which use empty slots and delete what they make, then the
-backup is restored and verified (see [Backup](#backup)). That needs Ethernet
-(the recording proxy).
+run**: a complete backup first, then the tests, which use empty slots and
+delete what they make, then the backup is restored and verified (see
+[Backup](#backup)). That needs Ethernet (the recording proxy). **If the
+backup isn't complete, the run stops before changing anything** (exit code
+8); `--protect` without Ethernet stops the same way. To sweep without the
+storage tests, leave them out (`--groups` without `storage`); over USB they
+are skipped.
+
+Only an emulator on a loopback address (127.x), reached through the proxy,
+runs the storage tests without a backup (`--verify` against it). Verifying
+against any other target is protected like a recording.
+
+**The connection must be the intended one.** The sweep stops before
+changing anything (exit code 2) if it can't connect, or if the target didn't
+answer through the proxy: when an address doesn't answer, the SDK falls back
+to an ATEM on this PC's USB, which would otherwise get every test. It also
+stops if a setting it will change can't be read first (it couldn't be put
+back).
 
 It **never** saves or clears the startup state (it can't be read back),
 changes the video mode (every output goes black), records or streams
@@ -101,10 +115,11 @@ changes the video mode (every output goes black), records or streams
 What "puts them back" covers is exactly the settings in the snapshot
 ([snapshot.cpp](../sweep/src/snapshot.cpp)), taken right after connecting.
 At the end each one is set back and checked, then everything is read back
-and compared; any setting that could not be read at the start, could not be
-set, or differs afterwards is listed and the run fails (exit code 5). **Your
-stored macros can change settings outside the snapshot** (audio, for
-example) when the macro tests run them; those are not restored.
+and compared; any setting that could not be set, can't be read back, or
+differs afterwards is listed and the run fails (exit code 5) — a setting
+that can't be read back is "not verified", never "matches". **Your stored
+macros can change settings outside the snapshot** (audio, for example) when
+the macro tests run them; those are not restored.
 
 It will not start (exit code 4, nothing changed) while a macro is being
 recorded or is running: the sweep's commands would end up in the recording.
@@ -167,6 +182,8 @@ an ATEM on this PC's USB. (Two connect tests use exactly that on purpose; see
 | 4 | a macro was recording / running: nothing was changed |
 | 5 | the switcher was not completely put back (settings or stored content) |
 | 6 | declined at the "Continue?" question: nothing was done |
+| 7 | stopped before the end (`--stop-file`): the results are partial, and never usable as a golden record |
+| 8 | no complete backup before a protected run: nothing was changed |
 
 Each run writes `runs\<time>-<mode>\`: `results.json` (per test: status,
 every observation, the SDK callbacks fired, the SDK functions called and —
@@ -217,7 +234,10 @@ atem-sweep 127.0.0.2 --capture 600 --out runs\asc-emu      # the emulator
 ```
 
 It stops after the given seconds, or when a file named `stop` appears in the
-output folder, and writes `wire.jsonl`. Comparing the two captures shows what
+output folder, and writes `wire.jsonl`. Packets are appended to
+`wire.jsonl.partial` as they arrive (flushed about once a second), so an
+interrupted capture keeps what it had; the same goes for a sweep's wire
+log. A run never writes into a folder that already holds one. Comparing the two captures shows what
 the client needs that the emulator doesn't do yet. Anything you change in the
 client during a capture really happens on the switcher. (Not yet done with
 ATEM Software Control.)
@@ -231,7 +251,7 @@ reverse-engineering data is the tests' recordings.
 
 ```powershell
 atem-sweep 192.168.0.240 --backup            # read-only; into backups\<time>
-atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences
+atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences, 2 = not comparable
 atem-sweep 192.168.0.240 --restore backups\A # put macros + stills back, then verify
 ```
 
@@ -260,9 +280,19 @@ Taking a backup only downloads; it never changes the switcher. A backup that
 misses anything says so (`"complete": false`, exit code 3). Backups go to
 `sweep/backups/`, which git ignores: they hold your stored macros and stills.
 
-**Restore** checks every backup file's checksum and that it is the same
-product, refuses while a macro runs or records, and asks first (`--yes`
-skips). Macros are uploaded when their bytes differ, renamed when only the
+**Checking a backup.** Restore and compare only use a backup that passes
+one check from end to end: format and version, `complete: true`, a macro
+and a still list (a missing list never reads as "empty": a restore would
+delete everything), each slot once and inside the pool, the metadata a
+restore needs, every file against its size and checksum, and the state. A
+backup that misses anything is **not comparable** (compare exits 2), never
+"identical". Taking a backup counts a slot it can't read (in use? its name,
+its hash) as a problem, so that backup is incomplete.
+
+**Restore** checks the backup first (above), that it is the same product
+and that the switcher's macro and still pools have the backup's sizes,
+refuses while a macro runs or records, and asks first (`--yes` skips). A
+slot whose state can't be read is left as it is. Macros are uploaded when their bytes differ, renamed when only the
 name or description does, deleted when the backup's slot is empty; stills
 the same, by the switcher's hash. Settings are not written by the restore
 (the sweep puts back the settings its tests change). Then it waits 10 s,

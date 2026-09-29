@@ -13,16 +13,36 @@ VideoFileSource::VideoFileSource(QObject* parent)
 
     connect(m_sink, &QVideoSink::videoFrameChanged,
             this,   &VideoFileSource::onVideoFrame);
+    // A file that can't be played shows the placeholder, not its last frame.
+    connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString& message) {
+        m_error = message;
+        {
+            QMutexLocker lock(&m_mutex);
+            m_lastFrame = QImage();
+        }
+        emit frameReady();
+    });
 }
 
 VideoFileSource::~VideoFileSource() = default;
 
 bool VideoFileSource::loadFile(const QString& path)
 {
+    if (!QFileInfo::exists(path)) return false;
     m_path = path;
+    m_error.clear();
+    {
+        QMutexLocker lock(&m_mutex);
+        m_lastFrame = QImage();   // not the previous file's last frame
+    }
     m_player->setSource(QUrl::fromLocalFile(path));
     m_player->play();
     return true;
+}
+
+void VideoFileSource::stop()
+{
+    m_player->stop();
 }
 
 QString VideoFileSource::label() const

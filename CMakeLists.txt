@@ -11,6 +11,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Multimedia MultimediaW
 # The switcher itself (protocol, state, commands, macros): the emulator core,
 # checked against the real ATEM Mini with atem-sweep. Also builds atem-emu,
 # the same switcher without a window.
+enable_testing()
 add_subdirectory(core)
 
 set(SOURCES
@@ -64,13 +65,20 @@ target_link_libraries(atem-emulator PRIVATE
     Qt6::MultimediaWidgets
 )
 
-# Copy Qt runtime DLLs and the switcher profiles next to the executable
+# Copy the Qt runtime, the Visual C++ runtime and the switcher profiles next
+# to the executable, so the folder runs on a PC without Qt or Visual Studio.
+find_program(WINDEPLOYQT NAMES windeployqt6 windeployqt HINTS "${Qt6_DIR}/../../../bin" REQUIRED)
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+include(InstallRequiredSystemLibraries)   # the VC++ runtime DLLs (msvcp140, vcruntime140, ...)
 add_custom_command(TARGET atem-emulator POST_BUILD
-    COMMAND "${Qt6_DIR}/../../../bin/windeployqt6.exe"
+    COMMAND "${WINDEPLOYQT}"
             --no-translations --no-system-d3d-compiler
             "$<TARGET_FILE:atem-emulator>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
+            "$<TARGET_FILE_DIR:atem-emulator>"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/core/profiles"
             "$<TARGET_FILE_DIR:atem-emulator>/profiles"
-    COMMENT "Deploying Qt runtime and switcher profiles"
+    COMMENT "Deploying the Qt and VC++ runtimes and the switcher profiles"
 )

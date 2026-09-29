@@ -31,6 +31,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include "wireproxy.h"
 
 #include <windows.h>
@@ -70,7 +71,11 @@ int main(int argc, char** argv) {
     QCommandLineParser p;
     p.setApplicationDescription("Sweeps the Blackmagic ATEM switcher API and records every response.");
     p.addHelpOption();
-    p.addPositionalArgument("target", "ATEM address (e.g. 192.168.0.240), 127.0.0.1 for the emulator, or \"usb\".");
+    p.addPositionalArgument("target", "ATEM address (e.g. 192.168.0.240), 127.0.0.2 for the emulator, or \"usb\".\n"
+                                      "Exit codes: 0 all passed, 1 a test failed or differs, 2 could not start,\n"
+                                      "3 results not written or a backup incomplete, 4 a macro was running,\n"
+                                      "5 not put back completely, 6 declined, 7 stopped before the end,\n"
+                                      "8 no complete backup: nothing changed.");
     QCommandLineOption verify("verify", "Compare against a golden results.json instead of recording.", "golden");
     QCommandLineOption noProxy("no-proxy", "Do not capture wire traffic (the SDK talks to the target directly).");
     QCommandLineOption only("only", "Run only tests whose id starts with this (connect.main always runs).", "prefix");
@@ -145,8 +150,10 @@ int main(int argc, char** argv) {
         QString dir = p.isSet(outDir) ? p.value(outDir)
                                       : QDir(QCoreApplication::applicationDirPath()).filePath(
                                             "runs/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + "-capture");
-        if ((QFileInfo(dir).exists() && !QFileInfo(dir).isDir()) || !QDir().mkpath(dir)) {
-            QTextStream(stdout) << "Cannot use output folder " << QDir::toNativeSeparators(dir) << "\n";
+        if ((QFileInfo(dir).exists() && !QFileInfo(dir).isDir()) || !QDir().mkpath(dir) ||
+            QFileInfo::exists(dir + "/wire.jsonl")) {
+            QTextStream(stdout) << "Cannot use output folder " << QDir::toNativeSeparators(dir)
+                                << " (it must be a new folder, not one that holds a capture)\n";
             return 2;
         }
         QFile::remove(dir + "/stop");
@@ -156,7 +163,16 @@ int main(int argc, char** argv) {
             QTextStream(stdout) << "Cannot start the proxy on 127.0.0.1:9910: " << error << "\n";
             return 2;
         }
-        int seconds = p.value(capture).toInt();
+        if (!proxy.startJournal(dir + "/wire.jsonl", &error)) {
+            QTextStream(stdout) << "Cannot write in " << QDir::toNativeSeparators(dir) << ": " << error << "\n";
+            return 2;
+        }
+        bool secondsOk = false;
+        int seconds = p.value(capture).toInt(&secondsOk);
+        if (!secondsOk || seconds <= 0) {
+            QTextStream(stdout) << "--capture needs a number of seconds\n";
+            return 2;
+        }
         QTextStream(stdout) << "Capturing: connect clients to 127.0.0.1, traffic goes to " << target << " ("
                             << seconds << " s, or create " << QDir::toNativeSeparators(dir + "/stop") << ")\n" << Qt::flush;
         QElapsedTimer t;
@@ -265,6 +281,12 @@ int main(int argc, char** argv) {
         if (answer != "y" && answer != "Y") return 6;   // declined: nothing done
     }
 
+    // A run never writes into a folder that already holds one (e.g. a golden record).
+    if (QFileInfo::exists(opt.outDir + "/results.json") || QFileInfo::exists(opt.outDir + "/wire.jsonl")) {
+        QTextStream(stdout) << "\x1b[31mThe output folder already holds a run: " << QDir::toNativeSeparators(opt.outDir)
+                            << " (use a new folder)\x1b[0m\n";
+        return 2;
+    }
     WireProxy* wire = nullptr;
     if (opt.useProxy) {
         wire = new WireProxy(QHostAddress::LocalHost, QHostAddress(opt.target));
@@ -274,19 +296,36 @@ int main(int argc, char** argv) {
                                 << " (is an emulator listening on 127.0.0.1? use --listen 127.0.0.2)\x1b[0m\n";
             return 2;
         }
+        if (!QDir().mkpath(opt.outDir) || !wire->startJournal(opt.outDir + "/wire.jsonl", &error)) {
+            QTextStream(stdout) << "\x1b[31mCannot write in " << QDir::toNativeSeparators(opt.outDir) << ": " << error
+                                << "\x1b[0m\n";
+            return 2;
+        }
     }
 
     // The storage tests (s.) change stored macros and stills. On a real
     // switcher they only run after a complete backup, which is restored and
-    // verified afterwards. Against the emulator (--verify) they just run.
+    // verified afterwards. Only an emulator on a loopback address, reached
+    // through the proxy (so the SDK can't have fallen back to a USB ATEM, which
+    // the runner checks), is exempt: verifying against any other target is
+    // protected like a recording.
     bool storageSelected = (opt.only.isEmpty() || opt.only.startsWith("s.") || QString("s.").startsWith(opt.only)) &&
                            (opt.groups.isEmpty() || opt.groups.contains("storage"));
+    const QHostAddress targetAddress(opt.target);
+    const bool localEmulator = opt.useProxy && targetAddress.isLoopback();
     QString protectDir;
     QTextStream out(stdout);
-    if (opt.verify) {
+    if (opt.verify && localEmulator) {
         opt.storageAllowed = true;
     } else if (storageSelected || p.isSet(protect)) {
         if (!wire) {
+            if (p.isSet(protect)) {
+                // Asked for protection that can't be had: change nothing.
+                out << "\x1b[31m--protect needs a verified backup, which needs Ethernet (the recording proxy): "
+                       "stopping before changing anything.\x1b[0m\n";
+                phase("backup", "fail");
+                return 8;
+            }
             out << "\x1b[33mA verified backup needs Ethernet (the recording proxy): no backup, storage tests skipped.\x1b[0m\n";
             phase("backup", "unavailable");
         } else {
@@ -295,9 +334,17 @@ int main(int argc, char** argv) {
             phase("backup", "start");
             int brc = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-before", out);
             s.disconnect();
-            opt.storageAllowed = brc == 0;
             phase("backup", brc == 0 ? "ok" : "fail");
-            if (brc != 0) out << "\x1b[33mThe backup is not complete: storage tests skipped.\x1b[0m\n";
+            if (brc != 0) {
+                // Protection failed: nothing is changed, rather than a sweep
+                // with weaker guarantees than the one asked for.
+                out << "\x1b[31mThe backup is not complete: stopping before changing anything. To sweep without the "
+                       "storage tests, leave them out (--groups without storage).\x1b[0m\n";
+                wire->stopProxy();
+                delete wire;
+                return 8;
+            }
+            opt.storageAllowed = true;
         }
     }
 
@@ -332,6 +379,19 @@ int main(int argc, char** argv) {
         if (verdict.open(QIODevice::WriteOnly))
             verdict.write(QJsonDocument(QJsonObject{ { "comparedWith", QFileInfo(protectDir + "-before").fileName() },
                                                      { "restored", rrc == 0 }, { "identical", crc == 0 } }).toJson());
+        // ...and in the results, so a record carries the whole protected
+        // lifecycle ("restored" there covers the settings only).
+        QFile rf(opt.outDir + "/results.json");
+        if (rf.open(QIODevice::ReadOnly)) {
+            QJsonObject doc = QJsonDocument::fromJson(rf.readAll()).object();
+            rf.close();
+            doc["storedContent"] = QJsonObject{ { "backup", QFileInfo(protectDir + "-before").fileName() },
+                                                { "restored", rrc == 0 }, { "identical", crc == 0 } };
+            QSaveFile wf(opt.outDir + "/results.json");
+            const QByteArray data = QJsonDocument(doc).toJson();
+            if (!(wf.open(QIODevice::WriteOnly) && wf.write(data) == data.size() && wf.commit()))
+                out << "\x1b[31mCould not add the stored-content verdict to results.json\x1b[0m\n";
+        }
         if (rrc != 0 || crc != 0) {
             out << "\x1b[31mStored content is NOT back as it was: restore from "
                 << QDir::toNativeSeparators(protectDir + "-before") << " (atem-sweep <ip> --restore ...)\x1b[0m\n";

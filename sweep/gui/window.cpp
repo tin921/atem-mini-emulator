@@ -509,7 +509,7 @@ void Window::setTarget(bool emulator) {
     m_address->setVisible(!emulator);
     m_model.gotLabel = emulator ? "Emulator" : "This run";
     m_subtitle->setText(emulator ? "Every square is one test: the emulator against the real ATEM’s answers."
-                                 : "Every square is one test: recording the real ATEM; everything is put back.");
+                                 : "Every square is one test: recording the real ATEM; the settings it changes are put back.");
     if (emulator && m_side == Side::Backups) {
         m_side = Side::Tests;
         m_backupBtn->setChecked(false);
@@ -888,11 +888,13 @@ void Window::run() {
     if (!m_emulator) {
         auto answer = QMessageBox::warning(this, "Run the sweep on the real ATEM",
             QString("The sweep switches inputs, moves the PiP, runs the stored macros and fades to black on the "
-                    "live output for about 30 minutes, then puts every setting back.\n\n"
+                    "live output for about 30 minutes, then puts back the settings it changes. Your stored macros "
+                    "may change others (audio, for example), which are not put back.\n\n"
                     "%1\n\nIs nothing live right now?")
                 .arg(address.compare("usb", Qt::CaseInsensitive) == 0
                          ? "Over USB there is no verified backup: the storage tests are skipped."
-                         : "Stored macros and stills are backed up first, restored at the end and checked."),
+                         : "Stored macros and stills are backed up first, restored at the end and checked; "
+                           "if the backup isn't complete, nothing is changed."),
             QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
         if (answer != QMessageBox::Yes) return;
     }
@@ -951,11 +953,15 @@ void Window::run() {
 void Window::stop() {
     if (m_job != Job::Sweep || m_stopping) return;
     QFile f(m_stopFile);
-    if (f.open(QIODevice::WriteOnly)) f.write("stop\n");
+    if (!f.open(QIODevice::WriteOnly) || f.write("stop\n") != 5) {
+        setStatus("Could not ask atem-sweep to stop (" + f.errorString() + "): it keeps running.");
+        return;
+    }
+    f.close();
     m_stopping = true;
     m_runBtn->setText("Stopping…");
     m_runBtn->setEnabled(false);
-    setStatus("Stopping after the current test; everything is put back first.");
+    setStatus("Stopping after the current test; the settings and stored content are put back first.");
 }
 
 // The emulator must own 127.0.0.2:9910 before the sweep starts: if nothing
@@ -964,15 +970,17 @@ bool Window::ensureEmulator(QString* error) {
     DWORD owner = udpOwner(kEmulatorAddress, 9910);
     if (!owner) owner = udpOwner("0.0.0.0", 9910);
     if (owner) {
+        // Not reused, even when it is an emulator: its profile, saved macros
+        // or changed state may not match the golden record. Each verify gets
+        // a fresh one.
         QString name = processName(owner);
-        if (name.startsWith("atem-emu", Qt::CaseInsensitive)) {
-            setStatus("Using the emulator that is already running (" + name + ").");
-            return true;
-        }
-        *error = QString("UDP 9910 is in use by %1 (pid %2), not by the emulator: not starting.").arg(name).arg(owner);
+        *error = QString("UDP 9910 is in use by %1 (pid %2). Close it: the verify starts its own emulator with the "
+                         "golden record's profile.").arg(name).arg(owner);
         return false;
     }
-    QString exe = EMU_EXE;
+    // Next to this program first (a copied folder), then the build tree.
+    const QString here = QCoreApplication::applicationDirPath();
+    QString exe = QFileInfo::exists(here + "/atem-emu.exe") ? here + "/atem-emu.exe" : QString(EMU_EXE);
     if (!QFile::exists(exe)) {
         *error = "The emulator is not built: " + QDir::toNativeSeparators(exe);
         return false;
@@ -980,8 +988,12 @@ bool Window::ensureEmulator(QString* error) {
     QStringList args = { "--listen", kEmulatorAddress };
     QString profile = m_golden->currentText();
     profile.remove(QRegularExpression("_sdk[0-9.]+"));
-    if (QFileInfo::exists(QString(EMU_PROFILES) + "/" + profile + "/dump.txt"))
-        args << "--profile" << QString(EMU_PROFILES) + "/" + profile;
+    for (const QString& profiles : { here + "/profiles", QString(EMU_PROFILES) }) {
+        if (QFileInfo::exists(profiles + "/" + profile + "/dump.txt")) {
+            args << "--profile" << profiles + "/" + profile;
+            break;
+        }
+    }
     if (!m_emu) m_emu = new QProcess(this);
     m_emu->setProcessEnvironment(childEnvironment());
     m_emu->setStandardOutputFile(QProcess::nullDevice());
@@ -1012,6 +1024,12 @@ void Window::startSweep(const QStringList& args, const QString& outDir) {
         m_sweep->setProcessEnvironment(childEnvironment());
         connect(m_sweep, &QProcess::readyReadStandardOutput, this, &Window::onOutput);
         connect(m_sweep, &QProcess::finished, this, [this](int code) { onFinished(code); });
+        connect(m_sweep, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+            if (e != QProcess::FailedToStart) return;
+            m_log << "Cannot start atem-sweep: " + m_sweep->errorString();
+            m_log << QString();
+            onFinished(2);   // could not start: controls back, emulator stopped
+        });
     }
     m_sweep->start(QCoreApplication::applicationDirPath() + "/atem-sweep.exe", args);
     m_runBtn->setText(m_job == Job::Sweep ? "Stop" : "Run sweep");
@@ -1110,6 +1128,11 @@ void Window::onFinished(int code) {
         case 2: text = "atem-sweep could not start: " + m_log.value(m_log.size() - 2); break;
         case 3: text = "Finished, but the results could not be written."; break;
         case 4: text = "Not started: the switcher is running or recording a macro."; break;
+        case 7: text = "Stopped before the end: the results are partial (not usable as a golden record)."; break;
+        case 8:
+            text = "Not started: the backup before the sweep is not complete, so nothing was changed.";
+            QMessageBox::warning(this, "atem-sweep", text + "\n\nSee the log; take a backup (Backup ATEM) to check.");
+            break;
         case 5:
             text = "Finished, but the switcher is NOT back as it was: see the backups.";
             QMessageBox::critical(this, "atem-sweep", "The switcher is not back exactly as it was.\n\n"

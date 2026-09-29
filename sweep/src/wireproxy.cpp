@@ -1,5 +1,7 @@
 #include "wireproxy.h"
 
+#include <QSaveFile>
+
 #include <QDateTime>
 #include <QFile>
 #include <QJsonDocument>
@@ -112,9 +114,52 @@ void WireProxy::run() {
     exec();
 }
 
+namespace {
+
+// One line of wire.jsonl.
+QByteArray packetLine(const WirePacket& p) {
+    QJsonArray fields;
+    for (const auto& fl : p.fields())
+        fields.append(QJsonObject{ { "field", fl.name }, { "hex", QString::fromLatin1(fl.data.toHex()) } });
+    QJsonObject o{
+        { "ms", p.ms },
+        { "dir", p.toDevice ? "tx" : "rx" },
+        { "client", p.client },
+        { "flags", QString("0x%1").arg(p.flags(), 2, 16, QLatin1Char('0')) },
+        { "session", QString("0x%1").arg(p.session(), 4, 16, QLatin1Char('0')) },
+        { "ack", p.ackId() },
+        { "id", p.packetId() },
+        { "hex", QString::fromLatin1(p.data.toHex()) },
+        { "fields", fields },
+    };
+    return QJsonDocument(o).toJson(QJsonDocument::Compact) + "\n";
+}
+
+} // namespace
+
+bool WireProxy::startJournal(const QString& path, QString* error) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_journal.setFileName(path + ".partial");
+    if (!m_journal.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error) *error = m_journal.errorString();
+        return false;
+    }
+    for (const auto& p : m_packets) m_journal.write(packetLine(p));
+    m_journalTarget = path;
+    m_sinceFlush.start();
+    return true;
+}
+
 void WireProxy::record(bool toDevice, quint16 client, const QByteArray& data) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_packets.push_back({ QDateTime::currentMSecsSinceEpoch() - m_startMs, toDevice, client, data });
+    if (m_journal.isOpen()) {
+        m_journal.write(packetLine(m_packets.back()));
+        if (m_sinceFlush.elapsed() >= 1000) {
+            m_journal.flush();
+            m_sinceFlush.restart();
+        }
+    }
 }
 
 size_t WireProxy::mark() const {
@@ -140,25 +185,21 @@ QJsonObject WireProxy::fieldsSince(size_t from) const {
     return QJsonObject{ { "tx", tx }, { "rx", rx }, { "packets", static_cast<int>(packets.size()) } };
 }
 
-bool WireProxy::writeLog(const QString& path) const {
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    for (const auto& p : since(0)) {
-        QJsonArray fields;
-        for (const auto& fl : p.fields())
-            fields.append(QJsonObject{ { "field", fl.name }, { "hex", QString::fromLatin1(fl.data.toHex()) } });
-        QJsonObject o{
-            { "ms", p.ms },
-            { "dir", p.toDevice ? "tx" : "rx" },
-            { "client", p.client },
-            { "flags", QString("0x%1").arg(p.flags(), 2, 16, QLatin1Char('0')) },
-            { "session", QString("0x%1").arg(p.session(), 4, 16, QLatin1Char('0')) },
-            { "ack", p.ackId() },
-            { "id", p.packetId() },
-            { "hex", QString::fromLatin1(p.data.toHex()) },
-            { "fields", fields },
-        };
-        if (f.write(QJsonDocument(o).toJson(QJsonDocument::Compact)) < 0 || f.write("\n") < 0) return false;
+bool WireProxy::writeLog(const QString& path) {
+    {
+        // The journal already holds every packet: finish it and give it its name.
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_journal.isOpen() && m_journalTarget == path) {
+            const bool ok = m_journal.flush() && m_journal.error() == QFileDevice::NoError;
+            m_journal.close();
+            if (!ok) return false;
+            QFile::remove(path);
+            return QFile::rename(path + ".partial", path);
+        }
     }
-    return f.flush() && f.error() == QFileDevice::NoError;
+    QSaveFile f(path);   // written whole or not at all
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    for (const auto& p : since(0))
+        if (f.write(packetLine(p)) < 0) return false;
+    return f.commit();
 }

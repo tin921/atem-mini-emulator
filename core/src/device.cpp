@@ -26,6 +26,31 @@ constexpr quint16 kStillStore = 0x0000;
 constexpr quint16 kMacroStore = 0xffff;
 constexpr int kChunkSize = 1396;     // data bytes per FTDa, as the ATEM Mini sends them
 constexpr int kWindow = 10;          // chunks sent ahead of the client's acknowledgements
+constexpr qint64 kMaxUpload = 64LL << 20;   // bytes: a 1080p still unpacked is 8 MB
+
+// The shortest body of each command, as the SDK sends it (from the golden
+// records: every command came at one length, except those carrying names or
+// data, where this is the header before them). A shorter command is refused:
+// its missing bytes would otherwise read as zeros and change state.
+const QHash<QByteArray, int> kMinCommandLength = {
+    { "CACC", 20 }, { "CACK", 28 }, { "CAuS", 4 }, { "CClV", 8 }, { "CCmd", 24 }, { "CDsC", 4 }, { "CDsF", 4 },
+    { "CDsG", 12 }, { "CDsL", 4 }, { "CDsM", 12 }, { "CDsR", 4 }, { "CDsT", 4 }, { "CEBP", 32 }, { "CFEP", 8 },
+    { "CFIP", 8 }, { "CFMP", 20 }, { "CFSP", 48 }, { "CICP", 40 }, { "CILP", 36 }, { "CIXP", 40 }, { "CInL", 32 },
+    { "CKDV", 64 }, { "CKFP", 56 }, { "CKLm", 12 }, { "CKMs", 12 }, { "CKOn", 4 }, { "CKPt", 16 }, { "CKTp", 8 },
+    { "CKeC", 4 }, { "CKeF", 4 }, { "CMPP", 4 }, { "CMPr", 8 }, { "CPgI", 4 }, { "CPvI", 4 }, { "CSTL", 4 },
+    { "CTCC", 4 }, { "CTDp", 8 }, { "CTDv", 20 }, { "CTMx", 4 }, { "CTPr", 4 }, { "CTPs", 4 }, { "CTTp", 4 },
+    { "CTWp", 20 }, { "DAut", 4 }, { "DCut", 4 }, { "DDsA", 4 }, { "FCut", 4 }, { "FTAD", 4 }, { "FTDa", 4 },
+    { "FTFD", 212 }, { "FTSD", 16 }, { "FTSU", 12 }, { "FTUA", 4 }, { "FtbA", 4 }, { "FtbC", 4 }, { "LOCK", 4 },
+    { "MAct", 4 }, { "MPSS", 8 }, { "MRCP", 4 }, { "MSRc", 8 }, { "MSlp", 4 }, { "RACK", 4 }, { "RFIP", 20 },
+    { "RFKF", 4 }, { "RFLP", 4 }, { "RFlK", 8 }, { "RICD", 20 }, { "RICE", 20 }, { "RInL", 4 }, { "SCPS", 8 },
+    { "SFKF", 4 }, { "SMPS", 68 }, { "TlMe", 4 },
+};
+
+// Fields the handlers rely on: a profile without them is not an ATEM Mini's.
+const char* const kRequiredFields[] = {
+    "_pin", "_MAC", "_mpl", "PrgI", "PrvI", "TrSS", "TrPs", "TrPr", "KeOn", "KeBP", "KeDV", "KeFS",
+    "FtbS", "FtbP", "DskS", "DskP", "DskB", "MRPr", "MRcS", "TlIn", "TlSr", "InPr", "MPfe", "LKST",
+};
 
 } // namespace
 
@@ -156,6 +181,7 @@ QByteArray text(const char* s, int size) {
 Device::Device(QObject* parent) : QObject(parent) {
     m_uptime.start();
     registerHandlers();
+    m_frameTimer.setSingleShot(true);
     m_frameTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_frameTimer, &QTimer::timeout, this, &Device::tick);
     m_macroTimer.setSingleShot(true);
@@ -170,6 +196,13 @@ Device::Device(QObject* parent) : QObject(parent) {
 
 bool Device::load(const QString& profileDir, QString* error) {
     if (!m_store.load(profileDir + "/dump.txt", error)) return false;
+    for (const char* name : kRequiredFields) {
+        if (!m_store.find(name)) {
+            if (error) *error = profileDir + "/dump.txt: no " + name + " field (not an ATEM Mini profile)";
+            m_store.clear();
+            return false;
+        }
+    }
 
     m_defaultNames.clear();
     for (QByteArray* in : m_store.all("InPr")) m_defaultNames[u16(*in, 0)] = *in;
@@ -180,7 +213,7 @@ bool Device::load(const QString& profileDir, QString* error) {
                                                              : DveOwner::None;
 
     const QByteArray* videoMode = m_store.find("VidM");
-    m_frameTimer.setInterval(qRound(1000.0 / framesPerSecond(videoMode ? u8(*videoMode, 0) : 0)));
+    m_fps = framesPerSecond(videoMode ? u8(*videoMode, 0) : 0);
 
     // Stored macros: names from the dump, steps from macros.txt (the fields
     // each macro changed when atem-sweep ran it on the real switcher).
@@ -209,8 +242,8 @@ bool Device::load(const QString& profileDir, QString* error) {
     }
     int used = 0;
     for (const Macro& m : m_pool) used += m.used ? 1 : 0;
-    emit log(QString("Profile %1: %2 fields, %3 of %4 macro slots used, %5 ms per frame")
-             .arg(profileDir).arg(m_store.size()).arg(used).arg(m_pool.size()).arg(m_frameTimer.interval()));
+    emit log(QString("Profile %1: %2 fields, %3 of %4 macro slots used, %5 frames per second")
+             .arg(profileDir).arg(m_store.size()).arg(used).arg(m_pool.size()).arg(m_fps));
     return true;
 }
 
@@ -231,6 +264,11 @@ FieldList Device::handle(const QByteArray& name, const QByteArray& data) {
     auto it = m_handlers.constFind(name);
     if (it == m_handlers.constEnd()) {
         emit log("unhandled command " + QString::fromLatin1(name) + " " + QString::fromLatin1(data.toHex()));
+        return {};
+    }
+    if (auto min = kMinCommandLength.constFind(name); min != kMinCommandLength.constEnd() && data.size() < *min) {
+        emit log(QString("short command %1 (%2 bytes, the SDK sends %3): ignored")
+                     .arg(QString::fromLatin1(name)).arg(data.size()).arg(*min));
         return {};
     }
     // While a macro is being recorded the switcher stores what it is told to do.
@@ -524,7 +562,19 @@ void Device::startAnimation(const QString& id, int frames, std::function<void(in
         return;
     }
     m_animations[id] = { 0, frames, std::move(step), std::move(done) };
-    if (!m_frameTimer.isActive()) m_frameTimer.start();
+    if (!m_frameTimer.isActive()) {
+        m_frameClock.start();
+        m_frameCount = 0;
+        scheduleTick();
+    }
+}
+
+// Each frame is due at n * (1000 / fps) ms after the start, so whole-
+// millisecond timer steps don't add up (23.98 fps is 41.71 ms, not 42).
+void Device::scheduleTick() {
+    ++m_frameCount;
+    const qint64 due = std::llround(m_frameCount * 1000.0 / m_fps);
+    m_frameTimer.start(static_cast<int>(std::max<qint64>(1, due - m_frameClock.elapsed())));
 }
 
 void Device::tick() {
@@ -540,6 +590,7 @@ void Device::tick() {
         }
     }
     if (m_animations.isEmpty()) m_frameTimer.stop();
+    else if (!m_frameTimer.isActive()) scheduleTick();
     updateTally();
     emitOutput();
 }
@@ -705,9 +756,12 @@ void Device::continueMacro() {
         case MacroOp::Patch:
             if (m_store.replace({ op.name, op.data })) m_out.append({ op.name, op.data });
             break;
-        case MacroOp::Wait:
-            m_macroTimer.start(std::max(1, qRound(op.frames * frameIntervalMs())));
+        case MacroOp::Wait: {
+            // Uploaded macros can ask for any number of frames: keep it a valid timer interval.
+            const double ms = std::clamp(op.frames * 1000.0 / m_fps, 1.0, 2147483647.0);
+            m_macroTimer.start(static_cast<int>(ms));
             return;
+        }
         case MacroOp::UserWait:
             m_run.waitingForUser = true;
             setRunStatus(true, true, m_run.index);
@@ -717,7 +771,7 @@ void Device::continueMacro() {
     const QByteArray* status = m_store.find("MRPr");
     if (status && u8(*status, 1) && !m.ops.isEmpty()) {   // loop: again, one frame later
         m_run.step = 0;
-        m_macroTimer.start(std::max(1, qRound(frameIntervalMs())));
+        m_macroTimer.start(std::max(1, qRound(1000.0 / m_fps)));
         return;
     }
     finishMacro();
@@ -1320,6 +1374,11 @@ void Device::registerHandlers() {
             QByteArray obtained(4, '\0');
             setU16(obtained, 0, store);
             reply("LKOB", obtained);
+            // Who holds it: a connection that goes away releases it
+            // (clientGone). Two clients locking at once isn't recorded yet.
+            m_lockOwner[store] = m_caller;
+        } else {
+            m_lockOwner.remove(store);
         }
         setU8(*lock, 2, locked ? 1 : 0);
         send("LKST", lock);
@@ -1405,12 +1464,12 @@ void Device::registerHandlers() {
             reply("FTDE", error);
             return;
         }
-        m_transfers[id] = t;
-        sendChunks(id);
+        m_transfers[transferKey(id)] = t;
+        sendChunks(transferKey(id));
     };
     h["FTUA"] = [this](const QByteArray& d) {       // chunk received
         const quint16 id = u16(d, 0);
-        auto it = m_transfers.find(id);
+        auto it = m_transfers.find(transferKey(id));
         if (it == m_transfers.end() || it->upload) return;
         ++it->acked;
         if (it->acked >= it->sent && it->sent * kChunkSize >= it->data.size()) {
@@ -1421,9 +1480,9 @@ void Device::registerHandlers() {
             m_transfers.erase(it);
             return;
         }
-        sendChunks(id);
+        sendChunks(transferKey(id));
     };
-    h["FTAD"] = [this](const QByteArray& d) { m_transfers.remove(u16(d, 0)); };   // abort
+    h["FTAD"] = [this](const QByteArray& d) { m_transfers.remove(transferKey(u16(d, 0))); };   // abort
     h["FTSD"] = [this](const QByteArray& d) {
         const quint16 id = u16(d, 0);
         Transfer t;
@@ -1432,8 +1491,9 @@ void Device::registerHandlers() {
         t.index = static_cast<int>(u32(d, 4));
         t.size = u32(d, 8);
         const QByteArray* pool = m_store.find("_mpl");
-        const bool ok = t.index >= 0 && (t.store == kMacroStore ? t.index < m_pool.size()
-                                        : t.store == kStillStore && pool && t.index < u8(*pool, 0));
+        const bool ok = t.index >= 0 && t.size <= kMaxUpload &&
+                        (t.store == kMacroStore ? t.index < m_pool.size()
+                                                : t.store == kStillStore && pool && t.index < u8(*pool, 0));
         if (!ok) {
             QByteArray error(4, '\0');
             setU16(error, 0, id);
@@ -1441,7 +1501,7 @@ void Device::registerHandlers() {
             reply("FTDE", error);
             return;
         }
-        m_transfers[id] = t;
+        m_transfers[transferKey(id)] = t;
         if (t.store == kStillStore) noteStillTransfer(t.index);
         QByteArray go(12, '\0');                     // id, 2, _, chunk size, chunk count (as recorded)
         setU16(go, 0, id);
@@ -1452,21 +1512,29 @@ void Device::registerHandlers() {
     };
     h["FTDa"] = [this](const QByteArray& d) {       // upload data
         const quint16 id = u16(d, 0);
-        auto it = m_transfers.find(id);
+        auto it = m_transfers.find(transferKey(id));
         if (it == m_transfers.end() || !it->upload) return;
         it->data += d.mid(4, u16(d, 2));
-        finishUpload(id);
+        if (it->data.size() > kMaxUpload) {        // more than any still or macro: give up
+            m_transfers.erase(it);
+            QByteArray error(4, '\0');
+            setU16(error, 0, id);
+            setU8(error, 2, 2);
+            reply("FTDE", error);
+            return;
+        }
+        finishUpload(transferKey(id));
     };
     h["FTFD"] = [this](const QByteArray& d) {       // upload: name, description, hash
         const quint16 id = u16(d, 0);
-        auto it = m_transfers.find(id);
+        auto it = m_transfers.find(transferKey(id));
         if (it == m_transfers.end() || !it->upload) return;
         auto text = [&](int at, int size) { QByteArray b = d.mid(at, size); return b.left(b.indexOf('\0') < 0 ? size : b.indexOf('\0')); };
         it->name = text(2, 64);
         it->description = text(66, 128);
         it->hash = d.mid(194, 16);
         it->described = true;
-        finishUpload(id);
+        finishUpload(transferKey(id));
     };
 
     // Media pool stills: rename, clear, clear all, capture the program.
@@ -1510,8 +1578,11 @@ void Device::registerHandlers() {
 // ── File transfers ──────────────────────────────────────────
 
 // Sends download chunks while fewer than kWindow are unacknowledged.
-void Device::sendChunks(quint16 id) {
-    Transfer& t = m_transfers[id];
+void Device::sendChunks(quint64 key) {
+    const quint16 id = static_cast<quint16>(key & 0xffff);
+    auto found = m_transfers.find(key);
+    if (found == m_transfers.end()) return;
+    Transfer& t = *found;
     const int chunks = std::max(1, static_cast<int>((t.data.size() + kChunkSize - 1) / kChunkSize));
     while (t.sent < chunks && t.sent - t.acked < kWindow) {
         const QByteArray part = t.data.mid(t.sent * kChunkSize, kChunkSize);
@@ -1529,28 +1600,40 @@ namespace {
 // from *at, so an upload is scanned once as its chunks arrive (the SDK sends
 // the description first, so this runs after every chunk), and stops before a
 // word or run that hasn't fully arrived.
-void unpackMore(const QByteArray& rle, int* at, qint64* size) {
+bool unpackMore(const QByteArray& rle, int* at, qint64* size) {
     static const char kRun[8] = { '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe' };
     const char* d = rle.constData();
     while (*at + 8 <= rle.size()) {
         if (std::memcmp(d + *at, kRun, 8) == 0) {
             if (*at + 24 > rle.size()) break;
-            *size += 8 * static_cast<qint64>(static_cast<quint64>(u32(rle, *at + 8)) << 32 | u32(rle, *at + 12));
+            const quint64 count = static_cast<quint64>(u32(rle, *at + 8)) << 32 | u32(rle, *at + 12);
+            if (count > static_cast<quint64>(kMaxUpload) / 8) return false;   // no real still repeats a word that often
+            *size += 8 * static_cast<qint64>(count);
             *at += 24;
         } else {
             *size += 8;
             *at += 8;
         }
+        if (*size > kMaxUpload) return false;
     }
+    return true;
 }
 } // namespace
 
 // An upload is complete once it is described (FTFD) and all its data is in.
-void Device::finishUpload(quint16 id) {
-    auto it = m_transfers.find(id);
+void Device::finishUpload(quint64 key) {
+    const quint16 id = static_cast<quint16>(key & 0xffff);
+    auto it = m_transfers.find(key);
     if (it == m_transfers.end() || !it->described) return;
     Transfer& t = *it;
-    if (t.store == kStillStore) unpackMore(t.data, &t.scanned, &t.unpacked);
+    if (t.store == kStillStore && !unpackMore(t.data, &t.scanned, &t.unpacked)) {
+        m_transfers.erase(it);                     // not a still any switcher would send
+        QByteArray error(4, '\0');
+        setU16(error, 0, id);
+        setU8(error, 2, 2);
+        reply("FTDE", error);
+        return;
+    }
     const qint64 have = t.store == kStillStore ? t.unpacked : t.data.size();
     if (have < t.size) return;
 
@@ -1575,6 +1658,25 @@ void Device::finishUpload(quint16 id) {
     setU16(done, 0, id);
     reply("FTDC", done);
     m_transfers.erase(it);
+}
+
+// A connection went away (disconnect, timeout): its transfers end and a
+// media lock it held is released, so another client can lock.
+void Device::clientGone(quint32 caller) {
+    for (auto it = m_transfers.begin(); it != m_transfers.end();) {
+        if ((it.key() >> 16) == caller) it = m_transfers.erase(it);
+        else ++it;
+    }
+    m_out.clear();
+    for (auto it = m_lockOwner.begin(); it != m_lockOwner.end();) {
+        if (it.value() != caller) { ++it; continue; }
+        if (QByteArray* lock = m_store.find("LKST", key16(it.key())); lock && u8(*lock, 2)) {
+            setU8(*lock, 2, 0);
+            send("LKST", lock);
+        }
+        it = m_lockOwner.erase(it);
+    }
+    emitOutput();
 }
 
 // A new macro's properties arrive in three steps on the real switcher: used,
@@ -1639,7 +1741,7 @@ void Device::noteStillTransfer(int index) {
 }
 
 Field Device::timeCode() const {
-    const double fps = 1000.0 / std::max(1.0, frameIntervalMs());
+    const double fps = m_fps;   // nominal, not the rounded timer interval
     const qint64 frames = static_cast<qint64>(m_uptime.elapsed() * fps / 1000.0);
     const int perSecond = std::max(1, qRound(fps));
     const qint64 seconds = frames / perSecond;

@@ -55,8 +55,9 @@ public:
         QImage img(path);
         if (img.isNull()) return false;
         m_path = path;
-        m_image = img.scaled(1280, 720, Qt::KeepAspectRatioByExpanding,
-                             Qt::SmoothTransformation).copy(0, 0, 1280, 720);
+        // Cover 16:9, then keep the centre (not the top-left corner).
+        QImage scaled = img.scaled(1280, 720, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        m_image = scaled.copy((scaled.width() - 1280) / 2, (scaled.height() - 720) / 2, 1280, 720);
         emit frameReady();
         return true;
     }
@@ -82,8 +83,10 @@ public:
     explicit VideoFileSource(QObject* parent = nullptr);
     ~VideoFileSource() override;
 
-    bool loadFile(const QString& path);
+    bool loadFile(const QString& path);   // false if the file isn't there
+    void stop();                          // no decoding while the camera shows something else
     QString filePath() const { return m_path; }
+    QString error() const { return m_error; }
 
     QImage currentFrame() const override;
     QString label() const override;
@@ -95,6 +98,7 @@ private:
     QMediaPlayer*  m_player = nullptr;
     QVideoSink*    m_sink   = nullptr;
     QString        m_path;
+    QString        m_error;               // the player's last error, if any
     mutable QMutex m_mutex;
     QImage         m_lastFrame;
 };

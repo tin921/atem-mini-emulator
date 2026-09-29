@@ -20,8 +20,8 @@ an emulator verify run and real-ATEM record runs, into
 | List | Category | Methods (2026-09-29) | Meaning |
 |---|---|---:|---|
 | [api-supported.tsv](../sweep/coverage/api-supported.tsv) | 1 emulator | 630 | recorded on the real ATEM, emulated and verified |
-| | 2 samples | 15 | used by the SDK samples, recorded, emulator to do |
-| | 3 sweep | 10 | other safe functions the Mini has, emulator to do (9 recorded, 1 not yet) |
+| | 2 samples | 8 | used by the SDK samples, recorded, emulator to do |
+| | 3 sweep | 17 | other safe functions the Mini has, emulator to do (16 recorded, 1 not yet) |
 | | 4 hardware | 70 | on the Mini and safe, but need a HyperDeck or a Blackmagic camera, which this project doesn't have ([Hardware](#hardware)) |
 | [api-unsupported.tsv](../sweep/coverage/api-unsupported.tsv) | 5 not on mini | 534 | the ATEM Mini doesn't have it — each recorded by the probe ([not-on-mini.txt](../sweep/coverage/not-on-mini.txt)) |
 | | 6 destructive | 5 | can't be undone ([Excluded functions](#excluded-functions)) |
@@ -31,8 +31,13 @@ an emulator verify run and real-ATEM record runs, into
 python coverage\categories.py --verify <emulator verify run>\results.json --record <real ATEM run>\results.json
 ```
 
-Category 1 counts a method only when every test that calls it passed in the
-emulator verify run (each result lists its SDK calls). How methods move:
+Category 1 counts a method only when a real-ATEM record run (`--record`,
+required) called it, and in the emulator verify run at least one passing
+test called it and no failing one did (each result lists its SDK calls;
+skipped tests prove nothing either way). Partial runs and runs without
+per-test calls are refused. Methods used only by tests changed since the
+recording (they differ until the next one) are therefore in 2 or 3 for now.
+How methods move:
 
 ```text
  3 sweep, 2 samples ──add a sweep test, record the real ATEM──► recorded
@@ -171,7 +176,10 @@ differences.
 
 Per test: the SDK's return codes and read-backs (`obs`), and *which kinds*
 of SDK callback fired (a set: not their order, count or arguments); plus the
-connect dump's field counts. Not compared: the wire bytes (kept in
+connect dump's field counts. Whole numbers (ids, counts, sizes, masks) must
+match exactly; other numbers too, up to printing round-off. An observation
+the golden record doesn't have is a difference ("not in the golden record":
+the test changed since the recording, which needs a new recording). Not compared: the wire bytes (kept in
 `wire.jsonl` for looking them up), keys marked `(informational)` — values
 that don't come from the switcher (timings, the SDK's leftovers for things
 the Mini doesn't have, the USB fallback, the hardware notes) — the tally /
@@ -181,10 +189,21 @@ bad input is refused inside the SDK, so a match shows the emulator answers
 this sequence of tests like the device — not that it behaves the same in
 every situation.
 
-Checks on the run itself: the golden record must be a passing recording
-(every test pass or skip, no duplicate ids) or it is refused; a full
-verification fails if a test of the golden record is missing; a test the
-device passed that is skipped here counts as a difference.
+Checks on the run itself: the golden record must be a complete, passing
+recording (a record run, not stopped, every planned test run; every test
+pass or skip, no duplicate ids) or it is refused; a full verification fails
+if a test of the golden record is missing; a test the device passed that is
+skipped here counts as a difference.
+
+Every `results.json` says how complete it is (`meta`: planned and executed
+tests, stopped, complete, a fingerprint of the test ids); a protected run
+adds the stored-content verdict (`storedContent`: restored, identical), since
+`restored` covers the settings only.
+
+Known limit: a callback is compared by source and type only, and the
+generated tests log some notifications without their event type, so a wrong
+callback of the same kind can pass. Keeping event types and arguments needs
+the tests changed and a new recording.
 
 ## Output
 

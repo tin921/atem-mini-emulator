@@ -59,10 +59,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    const QHostAddress address(parser.value(listen));
+    bool portOk = false;
+    const quint16 portNumber = parser.value(port).toUShort(&portOk);
+    if (address.isNull()) {
+        print("error: --listen " + parser.value(listen) + " is not an IP address");
+        return 1;
+    }
+    if (!portOk || portNumber == 0) {
+        print("error: --port " + parser.value(port) + " is not a port number (1-65535)");
+        return 1;
+    }
     emu::Server server(&device);
     server.setVerbose(parser.isSet(verbose));
     QObject::connect(&server, &emu::Server::log, &print);
-    if (!server.listen(QHostAddress(parser.value(listen)), parser.value(port).toUShort(), &error)) {
+    if (!server.listen(address, portNumber, &error)) {
         print("error: cannot listen: " + error);
         return 1;
     }

@@ -48,6 +48,7 @@ private:
         int tries = 0;
     };
     struct Client {
+        quint32 id = 0;              // for the device: whose transfers and lock
         QHostAddress address;
         quint16 port = 0;
         quint16 clientSession = 0;   // the session id from the client's SYN
@@ -71,6 +72,7 @@ private:
     void sendAck(Client& client, quint16 id);
     void broadcast(const FieldList& fields, Client* origin = nullptr, int originAck = -1);
     void resendAndExpire();
+    void dropClient(QMap<QString, Client>::iterator it, const QString& why);
     // State answers go out once per video frame, as on the switcher.
     void queue(const FieldList& fields);
     void flushFrame();
@@ -89,6 +91,8 @@ private:
     QElapsedTimer m_clock;
     QMap<QString, Client> m_clients;   // "address:port"
     quint16 m_nextSession = 0x28;
+    quint32 m_nextClientId = 1;
+    bool m_readScheduled = false;
     bool m_verbose = false;
 };
 

@@ -95,7 +95,27 @@ captured from the real switcher. Two timing rules matter to the SDK:
   device.
 - **Time code.** Every state packet starts with a `Time` field (the time
   code), and a time code request (`TiRq`) is answered with it. Without it the
-  SDK reported a media pool lock as busy.
+  SDK reported a media pool lock as busy. Time code, frame animations and
+  macro pauses run on the profile's nominal rate (23.98 fps is 41.71 ms a
+  frame), not a timer rounded to whole milliseconds.
+
+What the transport checks, so a stray or hostile packet changes nothing:
+
+- a datagram's length must be the one in its header;
+- the handshake's acknowledgement must carry the client's session, every
+  later packet the switcher's (as recorded): a packet from an earlier
+  connection on the same port is ignored;
+- reliable packets are applied in order: one after a gap is neither applied
+  nor acknowledged, so the client sends it again after the missing one (no
+  command is lost or applied out of order);
+- a packet with a damaged command applies none of its commands;
+- a command shorter than the SDK sends it (the lengths come from the golden
+  records) is refused, instead of its missing bytes reading as zeros;
+- at most 32 clients; work per network event is bounded.
+
+File transfers and the media lock belong to the connection that started
+them: a client that disconnects or times out loses its transfers and
+releases a lock it held.
 
 ### Commands and the rules the recordings showed
 
@@ -107,7 +127,9 @@ mix / dip / wipe / DVE transitions, time code, the Fairlight source,
 compressor, limiter, expander, EQ bands, master, mic level, input
 configuration). [check_setters.py](../core/tools/check_setters.py) replays
 every such command in a golden record through the table and compares with
-what the switcher sent back — before any C++ is built;
+what the switcher sent back — before any C++ is built, exiting non-zero on
+anything unexplained (two tests whose answers mix with a keyframe store in
+the same frame are listed as excluded, with the reason);
 [gen_setters.py](../core/tools/gen_setters.py) writes `src/setters_table.inc`,
 which `Device::applySetter` runs. What the recordings showed:
 
@@ -154,7 +176,10 @@ chunks, each acknowledged; uploads end with the new macro or still
 properties and `FTDC`. Stills are run-length encoded as on the device;
 stills from the profile have no recorded picture and download as one flat
 colour, uploaded stills download as uploaded. Capture, rename, clear and
-clear-all work on the media pool.
+clear-all work on the media pool. A still upload is counted as its chunks
+arrive (a full 8 MB frame takes about a second); uploads over 64 MB and
+nonsense run lengths are refused (`FTDE`), as are slot numbers outside the
+pool.
 
 **Macros** are the switcher's 100-slot pool. Recording stores every command
 the switcher receives until "stop recording", with pauses and user waits;
@@ -175,10 +200,23 @@ Unknown commands are acknowledged and logged as unhandled.
   project doesn't have, see [sdk-functions.md](sdk-functions.md#hardware)). Recording and
   streaming don't exist on the base ATEM Mini.
 - ATEM Software Control against the emulator is not verified yet.
-- The transport assumes a well-behaved client on a clean network: packets
-  arriving out of order can lose a command, and the session id is not checked
-  after the handshake. Malformed commands are not validated, some handlers
-  ignore the M/E index (the Mini has one), and media locks have no owner.
+- What the real switcher does when a second client locks the media pool
+  while another holds it isn't recorded yet: the emulator grants it (and
+  releases a lock when its holder goes away). Some handlers ignore the M/E
+  index (the Mini has one).
+- Macros made in the window (Save Output) are downloaded with only the ops
+  the codec knows (preview input, pause, user wait); their other steps run
+  in the emulator but aren't in the downloaded bytes, and the "unsupported
+  ops" flag isn't set for them. Uploaded and profile macros keep their exact
+  bytes.
+- The two golden records disagree on one wipe detail: after a pattern change
+  to 7, the 2026-09-26 recording kept symmetry 5000, the 2026-09-28 one set
+  8160 (the table follows the newer one; `check_setters.py` reports it on the
+  older record). A recording of pattern changes from different starting
+  states would settle it.
+- Stored content round trips (clear the stills, restore them) aren't exact:
+  cleared `MPfe` fields lose the leftover bytes the real switcher keeps, and
+  the profile's stills restore as one flat colour.
 - There is no video (the emulator app draws the picture).
 
 ## Build
@@ -191,5 +229,13 @@ cmake --build build --config Release
 ```
 
 Needs Qt 6 Core and Network. The executable finds its profile next to itself
-(`profiles/`, via `cmake --install`) or in `core/profiles`. The top-level
-build (`build-gui`) builds it too, as `build-gui\core\Release\atem-emu.exe`.
+(`profiles/`, via `cmake --install`) or in `core/profiles`; a profile is only
+used when it is whole (valid hex, the ATEM Mini's fields present). The
+top-level build (`build-gui`) builds it too, as
+`build-gui\core\Release\atem-emu.exe`.
+
+**Tests.** `atem-emu-tests` (run with `ctest -C Release` in the build folder)
+checks, offline: hostile transfers (slot numbers of 2³¹ and up, oversized
+run lengths), short commands, field identity, damaged profiles, macro bytes,
+per-client transfers and locks, and the transport over UDP on 127.0.0.3
+(packets out of order, another session, a wrong length, a damaged packet).

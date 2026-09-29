@@ -2,6 +2,7 @@
 #include "groups.h"
 #include "wireproxy.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -44,10 +45,14 @@ QString mark(const QString& status) {
 
 // ── Comparison with the golden record ────────────────────────
 
+// Whole numbers (ids, counts, sizes, masks, return codes) must match
+// exactly. Others come from the SDK's fixed-point values and match exactly
+// too in practice; the tiny tolerance only absorbs printing round-trips.
 bool sameValue(const QJsonValue& a, const QJsonValue& b) {
     if (a.isDouble() && b.isDouble()) {
         double x = a.toDouble(), y = b.toDouble();
-        return std::abs(x - y) <= 1e-3 + 1e-4 * std::max(std::abs(x), std::abs(y));
+        if (x == std::floor(x) && y == std::floor(y)) return x == y;
+        return std::abs(x - y) <= 1e-9 * std::max(1.0, std::max(std::abs(x), std::abs(y)));
     }
     if (a.isArray() && b.isArray()) {
         QJsonArray x = a.toArray(), y = b.toArray();
@@ -110,6 +115,11 @@ QStringList compareWithGolden(const QJsonObject& gold, const QJsonObject& got) {
         if (!o.contains(k)) diffs << QString("%1: missing (golden %2)").arg(k, brief(g[k]));
         else if (!sameValue(g[k], o[k])) diffs << QString("%1: golden %2, got %3").arg(k, brief(g[k]), brief(o[k]));
     }
+    // An observation the golden record doesn't have can't be verified: the
+    // test changed since the recording, which needs a new recording.
+    for (const QString& k : o.keys())
+        if (!k.contains("(informational)") && !g.contains(k))
+            diffs << QString("%1: not in the golden record (got %2; record the real ATEM again)").arg(k, brief(o[k]));
     std::set<QString> ge = eventSet(gold), oe = eventSet(got);
     QStringList missing, extra;
     for (const auto& e : ge) if (!oe.count(e)) missing << e;
@@ -222,8 +232,13 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
         QJsonParseError parseError;
         QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &parseError);
         QStringList invalid;
+        const QJsonObject meta = doc.object()["meta"].toObject();
         if (doc.isNull()) invalid << "not JSON: " + parseError.errorString();
         else if (!doc.object()["tests"].isArray()) invalid << "no \"tests\" array";
+        if (meta.contains("mode") && meta["mode"].toString() != "record")
+            invalid << "a " + meta["mode"].toString() + " run, not a recording";
+        if (meta["stopped"].toBool() || (meta.contains("complete") && !meta["complete"].toBool()))
+            invalid << "a partial run (stopped, or not every planned test ran)";
         for (const auto& v : doc.object()["tests"].toArray()) {
             QJsonObject t = v.toObject();
             QString id = t["id"].toString();
@@ -277,6 +292,7 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
         Ctx c{ s, wire, opt };
         c.eventMark = s.events.size();
         size_t wireMark = wire ? wire->mark() : 0;
+        const bool connectTest = t.id == "connect.main" && !snapshot;
         qint64 start = s.events.elapsed();
         QElapsedTimer timer;
         timer.start();
@@ -353,9 +369,31 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
         for (const QString& d : diffs) out("        " + paint("diff: ", "31") + d + "\n");
         for (const QString& x : notes) out("        " + paint("note: ", "33") + x + "\n");
 
-        if (t.id == "connect.main" && s.connected() && !snapshot) {
-            // Nothing has changed yet. Don't start while a macro is being
-            // recorded (the sweep's commands would end up in it) or runs.
+        if (connectTest) {
+            // Nothing has changed yet. Stop here unless the connection is
+            // the intended one: when an address doesn't answer, the SDK falls
+            // back to an ATEM on USB, which would then get every test.
+            if (!s.connected()) {
+                out(paint("\nCould not connect: stopping before changing anything.\n", "31;1"));
+                return 2;
+            }
+            if (wire) {
+                // The target must have answered through the proxy. (When it
+                // doesn't answer, the SDK's own packets still went through the
+                // proxy before it fell back to USB, so those prove nothing.)
+                bool answered = false;
+                for (const auto& p : wire->since(wireMark)) answered = answered || !p.toDevice;
+                if (!answered) {
+                    out(paint("\nThe SDK did not connect through the recording proxy to " + opt.target +
+                                  " (it may have fallen back to an ATEM on USB): stopping before changing anything.\n",
+                              "31;1"));
+                    return 2;
+                }
+            }
+        }
+        if (connectTest && s.connected()) {
+            // Don't start while a macro is being recorded (the sweep's
+            // commands would end up in it) or runs.
             BMDSwitcherMacroRecordStatus rec = bmdSwitcherMacroRecordStatusIdle;
             BMDSwitcherMacroRunStatus run = bmdSwitcherMacroRunStatusIdle;
             unsigned int recIndex = 0, runIndex = 0;
@@ -372,6 +410,14 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
             }
             snapshot = takeSnapshot(s);
             productName = c.obs["productName"].toString();
+            // Every setting the sweep changes must be readable first, or it
+            // couldn't be put back.
+            if (QStringList unread = snapshotUnread(snapshot); !unread.isEmpty()) {
+                out(paint("\nCould not read " + unread.join(", ") +
+                              " before changing anything: stopping (they couldn't be put back).\n", "31;1"));
+                delete snapshot;
+                return 2;
+            }
         }
     }
 
@@ -407,10 +453,22 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     jsonLine(opt, QJsonObject{ { "summary", QJsonObject{ { "pass", pass }, { "fail", fail }, { "skip", skip }, { "error", error },
                                                          { "restored", restored }, { "stopped", stopped }, { "out", opt.outDir } } } });
 
+    // Which tests were planned: a fingerprint of their ids, so a reference
+    // and a later run can be told apart when the tests change.
+    QByteArray planIds;
+    for (const auto* t : selected) planIds += t->id.toUtf8() + '\n';
+    const int executed = static_cast<int>(results.size());
     QJsonObject doc{
         { "meta", QJsonObject{
               { "tool", "atem-sweep" },
               { "mode", opt.verify ? "verify" : "record" },
+              { "planned", n },
+              { "executed", executed },
+              { "stopped", stopped },
+              { "complete", !stopped && executed == n },
+              { "testsSha256", QString::fromLatin1(QCryptographicHash::hash(planIds, QCryptographicHash::Sha256).toHex()) },
+              { "groups", opt.groups.isEmpty() ? QString("all") : opt.groups.join(',') },
+              { "only", opt.only },
               { "target", opt.target.isEmpty() ? "usb" : opt.target },
               { "viaProxy", opt.useProxy },
               { "productName", productName },
@@ -438,5 +496,6 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     out(paint("Results: " + QDir::toNativeSeparators(opt.outDir) + "\n", "90"));
 
     if (!restored) return 5;
+    if (stopped) return 7;          // partial: not every planned test ran
     return (fail || error) ? 1 : 0;
 }

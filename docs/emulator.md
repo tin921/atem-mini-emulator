@@ -40,6 +40,10 @@ It listens on **UDP 0.0.0.0:9910** at start. Options:
 
 Building it: [overview.md](overview.md#build).
 
+The app's log is `%LOCALAPPDATA%\CEMC\ATEM Emulator\atem-emulator.log` (the
+previous session's is kept as `.log.1`; a log that reaches 20 MB starts
+again).
+
 ## Connecting clients
 
 ### obs-atem plugin
@@ -129,15 +133,20 @@ there.
 - **Update** renames / re-describes the slot.
 - **Saved State** lists the macro's steps.
 
-Macros are saved in `%LOCALAPPDATA%\CEMC\ATEM Emulator\macros.json` (a file
-from the earlier version is converted on first start and kept as
-`macros-v1.json`). Until something is saved there, the pool holds the macros
-recorded from the real ATEM Mini with the profile.
+Macros are saved in `%LOCALAPPDATA%\CEMC\ATEM Emulator\macros.json`, with
+their exact bytes (a file from the earlier version is converted on first
+start and kept as `macros-v1.json`). Until something is saved there, the
+pool holds the macros recorded from the real ATEM Mini with the profile. A
+`macros.json` the app can't read (damaged, or from a newer version) is
+never saved over: the log says so, and the session uses the profile's
+macros.
 
 ### Virtual camera
 
 **Virtual Camera ON** registers `AtemVirtualCam.dll` (under HKCU, no admin)
-and streams the program picture at 30 fps; it appears as **"ATEM Emulator
+and streams the program picture at 30 fps (one emulator at a time; a program
+that opens the camera before the emulator's camera is on shows black, then
+the picture as soon as it is); it appears as **"ATEM Emulator
 Virtual Camera"** in OBS and other DirectShow applications (apps built on
 Media Foundation only, such as the Windows Camera app, don't list DirectShow
 cameras). **Virtual Camera OFF** unregisters it.

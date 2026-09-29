@@ -18,6 +18,8 @@ constexpr int kMaxPacket = 1420;          // the real switcher fills packets to 
 constexpr qint64 kResendAfterMs = 400;
 constexpr int kMaxTries = 15;
 constexpr qint64 kSilenceTimeoutMs = 60000;
+constexpr int kMaxClients = 32;             // connected and connecting
+constexpr int kMaxDatagramsPerRead = 256;   // then the event loop gets a turn
 
 // Packet ids are 15 bits and wrap: is a newer than b?
 bool newer(quint16 a, quint16 b) {
@@ -67,10 +69,21 @@ bool Server::listen(const QHostAddress& address, quint16 port, QString* error) {
 
 void Server::close() {
     m_housekeeping.stop();
+    m_frame.stop();
     m_socket.close();
+    m_pending.clear();
     bool had = clientCount() > 0;
+    for (const Client& c : m_clients) m_device->clientGone(c.id);
     m_clients.clear();
     if (had) emit clientCountChanged(0);
+}
+
+void Server::dropClient(QMap<QString, Client>::iterator it, const QString& why) {
+    const quint32 id = it->id;
+    emit log(it->name() + " " + why);
+    m_clients.erase(it);
+    m_device->clientGone(id);
+    emit clientCountChanged(clientCount());
 }
 
 int Server::clientCount() const {
@@ -89,14 +102,26 @@ QByteArray Server::header(quint8 flags, int length, quint16 session, quint16 ack
 }
 
 void Server::readPending() {
-    while (m_socket.hasPendingDatagrams()) {
+    // A bounded batch per call, so a flood can't starve the event loop (the
+    // window shares it); the rest comes on the next turn.
+    for (int n = 0; n < kMaxDatagramsPerRead && m_socket.hasPendingDatagrams(); ++n) {
         QNetworkDatagram datagram = m_socket.receiveDatagram();
         handleDatagram(datagram.data(), datagram.senderAddress(), static_cast<quint16>(datagram.senderPort()));
+    }
+    if (m_socket.hasPendingDatagrams() && !m_readScheduled) {
+        m_readScheduled = true;
+        QTimer::singleShot(0, this, [this] {
+            m_readScheduled = false;
+            readPending();
+        });
     }
 }
 
 void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, quint16 port) {
     if (data.size() < kHeaderSize) return;
+    // The header's length is the whole datagram's: anything else isn't an
+    // ATEM packet (or is damaged) and is dropped.
+    if ((u16(data, 0) & 0x07ff) != data.size()) return;
     quint8 flags = u8(data, 0) & 0xf8;
     quint16 session = u16(data, 2);
     quint16 ackId = u16(data, 4);
@@ -112,6 +137,11 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
     auto it = m_clients.find(key);
     if (it == m_clients.end()) return;
     Client& client = it.value();
+    // The handshake's acknowledgement carries the client's session; every
+    // later packet carries ours (0x8000 | n), as recorded. Anything else is
+    // from an earlier connection on the same port and must not touch this
+    // one (not even keep it alive).
+    if (session != (client.connected ? client.session : client.clientSession)) return;
     client.lastHeard = m_clock.elapsed();
 
     if (!client.connected) {
@@ -140,29 +170,43 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
     }
     if (!(flags & kReliable)) return;
 
-    bool fresh = !client.haveRemoteId || newer(id, client.lastRemoteId);
-    if (!fresh) {                       // a resend of something already handled
-        sendAck(client, id);
+    // Reliable packets are applied in order. One after a gap is neither
+    // applied nor acknowledged: the client sends it again after the missing
+    // one, so no command is lost or applied out of order. One already
+    // applied is acknowledged again (its acknowledgement was lost).
+    if (client.haveRemoteId && id != ((client.lastRemoteId + 1) & 0x7fff)) {
+        if (!newer(id, client.lastRemoteId)) sendAck(client, id);
         return;
     }
     client.haveRemoteId = true;
     client.lastRemoteId = id;
 
     // Commands: 16-bit length, 2 unused bytes, 4-character name, payload.
-    QList<FieldList> perCommand;
-    QStringList names;
+    // The whole packet is checked first: a damaged one changes nothing (not
+    // even the commands before the damage).
+    struct Command { QByteArray name, body; };
+    QList<Command> commands;
     QByteArray payload = data.mid(kHeaderSize);
-    for (int at = 0; at + 8 <= payload.size();) {
-        int length = u16(payload, at);
-        if (length < 8 || at + length > payload.size()) break;
-        QByteArray name = payload.mid(at + 4, 4);
-        QByteArray body = payload.mid(at + 8, length - 8);
-        if (m_verbose) emit log(QString("%1 > %2 %3").arg(client.name(), QString::fromLatin1(name), QString::fromLatin1(body.toHex())));
-        names << QString::fromLatin1(name);
-        perCommand.append(m_device->handle(name, body));
+    for (int at = 0; at < payload.size();) {
+        const int length = at + 8 <= payload.size() ? u16(payload, at) : 0;
+        if (length < 8 || at + length > payload.size()) {
+            emit log(QString("%1: damaged packet %2 ignored").arg(client.name()).arg(id));
+            sendAck(client, id);
+            return;
+        }
+        commands.append({ payload.mid(at + 4, 4), payload.mid(at + 8, length - 8) });
         at += length;
     }
+    QList<FieldList> perCommand;
+    QStringList names;
+    m_device->setCaller(client.id);
+    for (const Command& c : commands) {
+        if (m_verbose) emit log(QString("%1 > %2 %3").arg(client.name(), QString::fromLatin1(c.name), QString::fromLatin1(c.body.toHex())));
+        names << QString::fromLatin1(c.name);
+        perCommand.append(m_device->handle(c.name, c.body));
+    }
     perCommand.append(m_device->endOfPacket());
+    m_device->setCaller(0);
     if (!names.isEmpty()) emit commandsReceived(client.name(), names);
     // Answers for this client alone (file transfers, the lock) go at once, as
     // the switcher sends them; state answers wait for the next frame.
@@ -181,7 +225,8 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
 }
 
 void Server::queue(const FieldList& fields) {
-    if (fields.isEmpty()) return;
+    // Not listening: nobody to send to (a new client gets the whole state).
+    if (fields.isEmpty() || !isListening()) return;
     ++m_batch;
     for (const Field& f : fields) m_pending.append({ f, m_batch });
 }
@@ -229,17 +274,23 @@ void Server::handleSyn(const QByteArray& data, const QHostAddress& from, quint16
         QByteArray reply = header(kSyn, kHeaderSize + 8, session, 0, 0) + QByteArray(8, '\0');
         setU8(reply, kHeaderSize, 0x05);
         m_socket.writeDatagram(reply, from, port);
-        if (m_clients.remove(key)) {
-            emit log(key + " disconnected");
-            emit clientCountChanged(clientCount());
-        }
+        // Only this connection's own sessions end it (not a stale packet).
+        auto it = m_clients.find(key);
+        if (it != m_clients.end() && (session == it->clientSession || session == it->session))
+            dropClient(it, "disconnected");
         return;
     }
     if (opcode != 0x01) return;
 
     auto it = m_clients.find(key);
+    if (it == m_clients.end() && m_clients.size() >= kMaxClients) {
+        emit log(key + " refused: " + QString::number(kMaxClients) + " clients already");
+        return;
+    }
     if (it == m_clients.end() || it->connected || it->clientSession != session) {
+        if (it != m_clients.end()) m_device->clientGone(it->id);   // the old connection on this port
         Client c;
+        c.id = m_nextClientId++;
         c.address = from;
         c.port = port;
         c.clientSession = session;
@@ -325,8 +376,10 @@ void Server::resendAndExpire() {
             ++s->tries;
         }
         if (drop) {
+            const quint32 id = c.id;
             emit log(c.name() + " timed out");
             it = m_clients.erase(it);
+            m_device->clientGone(id);
             emit clientCountChanged(clientCount());
         } else {
             ++it;

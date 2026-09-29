@@ -100,12 +100,28 @@ def find(state, name, keybytes):
     return None
 
 
+# Tests whose recorded answers can't be tied to one command, with the reason.
+# They are reported as excluded, not as problems (and not silently dropped).
+EXCLUDED_TESTS = {
+    # Their put-back CKFP came in the same video frame as the keyframe store
+    # / clear that followed it, so the switcher's KKFP answer carries both and
+    # can't be credited to the CKFP alone. The tests settle before storing /
+    # clearing since 2026-09-29: check again after the next recording.
+    'm.fly.storeKeyFrame.bad': 'CKFP answer merged with the keyframe store in the same frame',
+    'm.fly.clearKeyFrame.bad': 'CKFP answer merged with the keyframe clear in the same frame',
+}
+
+
 def main():
     golden = sys.argv[1]
     only = set(sys.argv[2:])
     state = load_dump(golden)
     run = json.load(open(os.path.join(golden, 'results.json'), encoding='utf-8'))
     problems = collections.defaultdict(list)
+    excluded = collections.defaultdict(list)
+
+    def note(cmd, test, text):
+        (excluded if test['id'] in EXCLUDED_TESTS else problems)[cmd].append(text)
     pairs = collections.defaultdict(collections.Counter)   # (cmd, prop) -> (sent, stored) counts
     checked = collections.Counter()
     spec_fields = {sp['field']: sp for sp in SETTERS.values()}
@@ -171,7 +187,7 @@ def main():
             fkey = [(foff, c[coff]) for coff, foff in spec['key']]
             target = find(state, spec['field'], fkey)
             if target is None:
-                problems[cmd].append(f"{t['id']}: no {spec['field']} with key {fkey}")
+                note(cmd, t, f"{t['id']}: no {spec['field']} with key {fkey}")
                 continue
             predicted, changed_props, refused, changed, mask = predict(spec, c, target)
             checked[cmd] += 1
@@ -202,7 +218,7 @@ def main():
             echo_same = spec.get('echoSame', True) and any(p.get('echoSame', True) for p, _ in changed_props)
             if not refused and not changed and not echo_same:
                 if got is not None:
-                    problems[cmd].append(f"{t['id']}: answered a same-value set, the table says it doesn't [{sent_text}]")
+                    note(cmd, t, f"{t['id']}: answered a same-value set, the table says it doesn't [{sent_text}]")
                     target[:] = got
                 continue
             for p, s in changed_props:
@@ -210,11 +226,11 @@ def main():
                     pairs[(cmd, p['name'])][(s, 'no answer')] += 1
             if refused:
                 if got is not None:
-                    problems[cmd].append(f"{t['id']}: the switcher answered, the table refuses [{sent_text}]")
+                    note(cmd, t, f"{t['id']}: the switcher answered, the table refuses [{sent_text}]")
                     target[:] = got
                 continue
             if got is None:
-                problems[cmd].append(f"{t['id']}: no answer (the switcher refused?) [{sent_text}]")
+                note(cmd, t, f"{t['id']}: no answer (the switcher refused?) [{sent_text}]")
                 continue
             for p in spec['props']:
                 exp = read_int(predicted, p['field'], p['size'], p['signed'])
@@ -222,7 +238,7 @@ def main():
                 if p['bit'] is None or mask & (1 << p['bit']):
                     pairs[(cmd, p['name'])][(read_int(c, p['cmd'], p['size'], p['signed']), real)] += 1
                 if exp != real:
-                    problems[cmd].append(f"{t['id']}: {p['name']} expected {exp}, the switcher has {real}")
+                    note(cmd, t, f"{t['id']}: {p['name']} expected {exp}, the switcher has {real}")
             target[:] = got   # follow the switcher from here on
         # Answers no command claimed (side effects of other commands) keep the state in step.
         for i, (n, b) in enumerate(rx):
@@ -234,6 +250,10 @@ def main():
                     tgt[:] = b
 
     print(f'{skipped} commands not checked (after an action command), {coalesced} commands answered together with the next one')
+    for test_id, why in EXCLUDED_TESTS.items():
+        n = sum(1 for lines in excluded.values() for line in lines if line.startswith(test_id + ':'))
+        if n:
+            print(f'excluded: {test_id} ({n} finding(s)): {why}')
     for cmd in SETTERS:
         if only and cmd not in only:
             continue
@@ -252,5 +272,9 @@ def main():
                     print(f'      suggest allow {answered}  (refused {refused})')
 
 
+    # Any unexplained problem fails the check (for scripts and CI).
+    return 1 if any(problems[c] for c in SETTERS if not only or c in only) else 0
+
+
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
