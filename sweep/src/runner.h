@@ -19,6 +19,9 @@ struct Options {
     QString goldenPath;
     QString outDir;
     QString only;            // run tests whose id starts with this
+    QStringList groups;      // run only these groups (groups.h); empty: all
+    bool json = false;       // also print "@@" + one JSON object per line, for atem-sweep-gui
+    QString stopFile;        // stop (and put everything back) once this file exists
     bool listOnly = false;
     bool allowCamera = false; // send camera actions (autofocus) to BMD cameras
     bool allowMicPower = false; // switch plug-in power on the mic inputs

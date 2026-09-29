@@ -28,6 +28,9 @@
 
 #include "backup.h"
 #include "runner.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
 #include "wireproxy.h"
 
 #include <windows.h>
@@ -38,6 +41,15 @@
 #ifndef SWEEP_BACKUP_DIR
 #define SWEEP_BACKUP_DIR "backups"
 #endif
+
+// With --json: a phase of the run for atem-sweep-gui ("@@" + JSON line).
+static bool g_json = false;
+static void phase(const char* name, const char* state) {
+    if (!g_json) return;
+    QByteArray line = "@@" + QJsonDocument(QJsonObject{ { "phase", name }, { "state", state } }).toJson(QJsonDocument::Compact) + "\n";
+    fwrite(line.constData(), 1, static_cast<size_t>(line.size()), stdout);
+    fflush(stdout);
+}
 
 static void enableConsole() {
     SetConsoleOutputCP(CP_UTF8);
@@ -63,6 +75,13 @@ int main(int argc, char** argv) {
     QCommandLineOption noProxy("no-proxy", "Do not capture wire traffic (the SDK talks to the target directly).");
     QCommandLineOption only("only", "Run only tests whose id starts with this (connect.main always runs).", "prefix");
     QCommandLineOption list("list", "List the tests and exit.");
+    QCommandLineOption groups("groups", "Run only these test groups, comma-separated: connect, generated, manual, "
+                                        "storage, scenario (connect.main always runs).", "list");
+    QCommandLineOption json("json", "Also print progress as \"@@\" + one JSON object per line (for atem-sweep-gui).");
+    QCommandLineOption protect("protect", "On a real switcher, back up the stored macros and stills before the sweep "
+                                          "and restore and verify them after it, even without the storage tests.");
+    QCommandLineOption stopFile("stop-file", "Stop after the current test once this file exists; settings and "
+                                             "stored content are put back as usual.", "path");
     QCommandLineOption outDir("out", "Output folder (default: runs\\<time>-<mode>).", "dir");
     QCommandLineOption yes("yes", "Do not ask before changing the switcher's output.");
     QCommandLineOption allowCamera("allow-camera", "Also send camera actions (autofocus) to Blackmagic cameras.");
@@ -77,8 +96,8 @@ int main(int argc, char** argv) {
     QCommandLineOption restore("restore", "Put the switcher's macros and stills back to a backup folder, then take "
                                           "a new backup and compare it with that folder. Asks first unless --yes.",
                                "backup");
-    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, allowMicPower, coverageDir, capture, backup, compare,
-                   restore });
+    p.addOptions({ verify, noProxy, only, list, groups, json, protect, stopFile, outDir, yes, allowCamera, allowMicPower, coverageDir,
+                   capture, backup, compare, restore });
     p.process(app);
 
     if (p.isSet(compare)) {
@@ -106,6 +125,10 @@ int main(int argc, char** argv) {
     Options opt;
     opt.listOnly = p.isSet(list);
     opt.only = p.value(only);
+    if (p.isSet(groups)) opt.groups = p.value(groups).split(',', Qt::SkipEmptyParts);
+    opt.json = p.isSet(json);
+    g_json = opt.json;
+    opt.stopFile = p.value(stopFile);
     opt.allowCamera = p.isSet(allowCamera);
     opt.allowMicPower = p.isSet(allowMicPower);
     opt.coverageDir = p.isSet(coverageDir) ? p.value(coverageDir) : QString(SWEEP_COVERAGE_DIR);
@@ -196,6 +219,10 @@ int main(int argc, char** argv) {
                 out << "Compared with " << QDir::toNativeSeparators(from) << ":\n";
                 int crc = brc == 0 ? compareBackups(from, dir, out) : 2;
                 if (rc == 0) rc = crc == 0 ? 0 : 5;   // 5: not back as it was
+                QFile verdict(dir + "/restore-check.json");
+                if (brc == 0 && verdict.open(QIODevice::WriteOnly))
+                    verdict.write(QJsonDocument(QJsonObject{ { "comparedWith", QFileInfo(from).fileName() },
+                                                             { "identical", crc == 0 } }).toJson());
             }
         } else {
             out << "atem-sweep backup (read-only)  target: " << (t.isEmpty() ? QString("USB") : t) << "\n" << Qt::flush;
@@ -252,35 +279,59 @@ int main(int argc, char** argv) {
     // The storage tests (s.) change stored macros and stills. On a real
     // switcher they only run after a complete backup, which is restored and
     // verified afterwards. Against the emulator (--verify) they just run.
-    bool storageSelected = opt.only.isEmpty() || opt.only.startsWith("s.") || QString("s.").startsWith(opt.only);
+    bool storageSelected = (opt.only.isEmpty() || opt.only.startsWith("s.") || QString("s.").startsWith(opt.only)) &&
+                           (opt.groups.isEmpty() || opt.groups.contains("storage"));
     QString protectDir;
     QTextStream out(stdout);
     if (opt.verify) {
         opt.storageAllowed = true;
-    } else if (storageSelected) {
+    } else if (storageSelected || p.isSet(protect)) {
         if (!wire) {
-            out << "\x1b[33mStorage tests need a verified backup, which needs Ethernet (the recording proxy): skipped.\x1b[0m\n";
+            out << "\x1b[33mA verified backup needs Ethernet (the recording proxy): no backup, storage tests skipped.\x1b[0m\n";
+            phase("backup", "unavailable");
         } else {
             protectDir = QString(SWEEP_BACKUP_DIR) + "/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + "-sweep";
-            out << "Backup before the storage tests...\n" << Qt::flush;
+            out << "Backup before the sweep...\n" << Qt::flush;
+            phase("backup", "start");
             int brc = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-before", out);
             s.disconnect();
             opt.storageAllowed = brc == 0;
+            phase("backup", brc == 0 ? "ok" : "fail");
             if (brc != 0) out << "\x1b[33mThe backup is not complete: storage tests skipped.\x1b[0m\n";
         }
     }
 
+    phase("tests", "start");
     int rc = runSweep(s, wire, opt);
     s.disconnect();
+    phase("tests", rc == 0 || rc == 1 ? "ok" : "fail");
 
     if (opt.storageAllowed && !protectDir.isEmpty()) {
+        // What the sweep left behind, before anything is put back: for
+        // troubleshooting a restore (the backups are never test data).
+        out << "Backup of what the sweep left...\n" << Qt::flush;
+        phase("swept", "start");
+        QThread::sleep(10);   // let the switcher settle first (see the backup notes in README)
+        int src = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-swept", out);
+        s.disconnect();
+        phase("swept", src == 0 ? "ok" : "fail");
+
         out << "Restoring stored content from " << QDir::toNativeSeparators(protectDir + "-before") << "...\n" << Qt::flush;
+        phase("restore", "start");
         int rrc = restoreBackup(s, opt.connectAddress, protectDir + "-before", out);
         s.disconnect();
-        QThread::sleep(10);   // let the switcher settle (see the backup notes in README)
+        phase("restore", rrc == 0 ? "ok" : "fail");
+        phase("compare", "start");
+        QThread::sleep(10);
         int vrc = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-after", out);
         s.disconnect();
         int crc = vrc == 0 ? compareBackups(protectDir + "-before", protectDir + "-after", out) : 2;
+        phase("compare", crc == 0 ? "ok" : "fail");
+        // The verdict, next to the backups, for atem-sweep-gui's backup list.
+        QFile verdict(protectDir + "-after/restore-check.json");
+        if (verdict.open(QIODevice::WriteOnly))
+            verdict.write(QJsonDocument(QJsonObject{ { "comparedWith", QFileInfo(protectDir + "-before").fileName() },
+                                                     { "restored", rrc == 0 }, { "identical", crc == 0 } }).toJson());
         if (rrc != 0 || crc != 0) {
             out << "\x1b[31mStored content is NOT back as it was: restore from "
                 << QDir::toNativeSeparators(protectDir + "-before") << " (atem-sweep <ip> --restore ...)\x1b[0m\n";

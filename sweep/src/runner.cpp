@@ -1,4 +1,5 @@
 #include "runner.h"
+#include "groups.h"
 #include "wireproxy.h"
 
 #include <QDateTime>
@@ -26,6 +27,12 @@ void out(const QString& s) {
 
 QString paint(const QString& s, const char* ansi) {
     return QString("\x1b[%1m%2\x1b[0m").arg(ansi, s);
+}
+
+// For atem-sweep-gui: one JSON object per line, marked so it can be told
+// from the text around it.
+void jsonLine(const Options& opt, const QJsonObject& o) {
+    if (opt.json) out("@@" + QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)) + "\n");
 }
 
 QString mark(const QString& status) {
@@ -183,10 +190,16 @@ void addTest(const QString& id, const QString& title, std::function<void(Ctx&)> 
 
 int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     std::vector<const Test*> selected;
-    for (const auto& t : registry())
-        if (opt.only.isEmpty() || t.id.startsWith(opt.only) || t.id.startsWith("connect.main"))
-            selected.push_back(&t);
+    for (const auto& t : registry()) {
+        bool wanted = (opt.only.isEmpty() || t.id.startsWith(opt.only)) &&
+                      (opt.groups.isEmpty() || opt.groups.contains(testGroup(t.id)));
+        if (wanted || t.id.startsWith("connect.main")) selected.push_back(&t);
+    }
 
+    QJsonArray plan;
+    for (const auto* t : selected) plan.append(QJsonObject{ { "id", t->id }, { "title", t->title } });
+    jsonLine(opt, QJsonObject{ { "plan", plan } });
+    if (opt.listOnly && opt.json) return 0;
     if (opt.listOnly) {
         for (const auto* t : selected) out(QString("%1  %2\n").arg(t->id, -34).arg(t->title));
         out(QString("%1 tests\n").arg(selected.size()));
@@ -247,8 +260,16 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     int n = static_cast<int>(selected.size());
     QString productName;
 
+    bool stopped = false;
     for (int i = 0; i < n; ++i) {
+        if (!opt.stopFile.isEmpty() && QFile::exists(opt.stopFile)) {
+            out(paint(QString("\nStopped after %1 of %2 tests.\n").arg(i).arg(n), "33;1"));
+            jsonLine(opt, QJsonObject{ { "stopped", i } });
+            stopped = true;
+            break;
+        }
         const Test& t = *selected[i];
+        jsonLine(opt, QJsonObject{ { "start", t.id }, { "i", i + 1 }, { "n", n } });
         Ctx c{ s, wire, opt };
         c.eventMark = s.events.size();
         size_t wireMark = wire ? wire->mark() : 0;
@@ -298,6 +319,20 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
             r["diffs"] = QJsonArray::fromStringList(diffs);
         }
         results.append(r);
+        if (opt.json) {
+            QJsonObject line = r;
+            line.remove("wire");
+            line["i"] = i + 1;
+            line["n"] = n;
+            if (opt.verify) {
+                auto g = golden.find(t.id);
+                if (g != golden.end()) {
+                    line["goldenObs"] = g->second["obs"];
+                    line["goldenSdk"] = g->second["sdk"];
+                }
+            }
+            jsonLine(opt, QJsonObject{ { "result", line } });
+        }
 
         if (status == "pass") ++pass;
         else if (status == "fail") ++fail;
@@ -337,7 +372,7 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     }
 
     // A full verification also needs every test of the reference to exist.
-    if (opt.verify && opt.only.isEmpty()) {
+    if (opt.verify && opt.only.isEmpty() && opt.groups.isEmpty() && !stopped) {
         std::set<QString> ran;
         for (const auto* t : selected) ran.insert(t->id);
         for (const auto& [id, g] : golden) {
@@ -351,7 +386,9 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     bool restored = true;
     if (snapshot) {
         out(paint("\nRestoring the switcher to its state before the sweep...\n", "36"));
+        jsonLine(opt, QJsonObject{ { "phase", "settings" }, { "state", "start" } });
         restored = restoreSnapshot(s, snapshot, restoreLog);
+        jsonLine(opt, QJsonObject{ { "phase", "settings" }, { "state", restored ? "ok" : "fail" } });
         for (const QString& l : restoreLog) out("  " + l + "\n");
         if (!restored) out(paint("  RESTORE INCOMPLETE: see above\n", "31;1"));
     }
@@ -363,6 +400,8 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
     QString summary = QString("%1 passed, %2 failed, %3 skipped, %4 errors (%5 tests)")
                           .arg(pass).arg(fail).arg(skip).arg(error).arg(n);
     out("\n" + paint(summary, fail || error ? "31;1" : "32;1") + "\n");
+    jsonLine(opt, QJsonObject{ { "summary", QJsonObject{ { "pass", pass }, { "fail", fail }, { "skip", skip }, { "error", error },
+                                                         { "restored", restored }, { "stopped", stopped }, { "out", opt.outDir } } } });
 
     QJsonObject doc{
         { "meta", QJsonObject{

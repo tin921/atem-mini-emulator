@@ -89,6 +89,42 @@ python slim_record.py runs\<run> golden\<name>
 Opt-in actions: `--allow-camera` (autofocus on a Blackmagic camera),
 `--allow-mic-power` (plug-in power on the mic inputs).
 
+For other programs: `--groups connect,generated,manual,storage,scenario`
+runs only those groups, `--json` also prints the plan, each test's result and
+the run's phases as `@@` + one JSON object per line, `--stop-file PATH` stops
+after the current test once the file exists (settings and stored content are
+put back as usual), and `--protect` backs up the stored content before a
+recording and restores and checks it after, even without the storage tests.
+With the backup, a real-ATEM run takes three backups: `-before`, `-swept`
+(what the sweep left, for troubleshooting) and `-after` (after restoring,
+compared with `-before`; the verdict is in `-after\restore-check.json`).
+
+### atem-sweep-gui
+
+`atem-sweep-gui.exe` (next to `atem-sweep.exe`) shows the sweep as a
+coverage map: every test is a square, grouped as below, coloured as it runs
+(same as the real ATEM, differs, skipped).
+
+- **Emulator** verifies the emulator against a golden record. The GUI starts
+  `atem-emu --listen 127.0.0.2` with the matching profile, and only starts
+  the sweep once that process owns 127.0.0.2:9910 (otherwise the SDK could
+  fall back to the real ATEM on USB). It stops the emulator afterwards.
+- **Real ATEM** records a new run: it asks first, then backs up, sweeps, puts
+  the settings back, backs up what the sweep left, restores the stored
+  content and checks it; the steps show above the map. **Stop** finishes the
+  current test and puts everything back.
+- A checkbox per group takes it out of the run. The right-hand list drills
+  in: interface, then property, then each value, with both values where the
+  emulator differs; pointing at a row lights up its squares.
+- **Backup ATEM** (real ATEM only) shows the backups grouped by sweep, with
+  **Backup now** and a **Restore** per backup (asks first; checks after).
+- **Download report** saves every test with its source, values and SDK
+  functions as a Markdown file.
+
+`--screenshot FILE` (with `--iface NAME [--prop NAME]` or `--backups`) saves
+a view and exits; `--selftest GROUPS --screenshot FILE` runs those groups
+against the emulator first.
+
 ### Test groups
 
 | Prefix | Tests | What |
