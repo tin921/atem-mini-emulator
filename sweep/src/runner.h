@@ -21,6 +21,7 @@ struct Options {
     QString only;            // run tests whose id starts with this
     bool listOnly = false;
     bool allowCamera = false; // send camera actions (autofocus) to BMD cameras
+    bool allowMicPower = false; // switch plug-in power on the mic inputs
     QString coverageDir;     // tier1-plugin.txt, tier2-samples.txt, excluded.txt
 };
 
@@ -70,6 +71,7 @@ void addTest(const QString& id, const QString& title, std::function<void(Ctx&)> 
 // Test groups (tests_*.cpp).
 void registerConnectTests();
 void registerProbeTests();
+void registerGeneratedTests();
 void registerInputTests();
 void registerMixEffectTests();
 void registerKeyTests();

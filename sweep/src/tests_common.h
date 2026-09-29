@@ -22,6 +22,10 @@ inline QJsonValue js(double v) { return std::isfinite(v) ? QJsonValue(v) : QJson
 inline QJsonValue js(BOOL v) { return QJsonValue(v != FALSE); }
 inline QJsonValue js(unsigned int v) { return QJsonValue(static_cast<double>(v)); }
 inline QJsonValue js(BMDSwitcherInputId v) { return QJsonValue(static_cast<double>(v)); }
+inline QJsonValue js(unsigned short v) { return QJsonValue(static_cast<double>(v)); }
+inline QJsonValue js(short v) { return QJsonValue(static_cast<double>(v)); }
+// A number of any integer type (int is BOOL on Windows, so js(int) records a bool).
+template <class T> QJsonValue jsNum(T v) { return QJsonValue(static_cast<double>(v)); }
 template <class E, class = std::enable_if_t<std::is_enum_v<E>>>
 inline QJsonValue js(E v) { return QJsonValue(fourcc(static_cast<uint32_t>(v))); }
 
@@ -48,6 +52,32 @@ void probe(Ctx& c, T value, Set set, Get get, bool good) {
                  QString("read back %1, expected %2")
                      .arg(js(back).toVariant().toString(), js(value).toVariant().toString()));
     }
+}
+
+// Like probe(), for reverse engineering: the original value is read first,
+// `value` is set and read back (recorded whatever it is, good or bad), then
+// the original is put back and checked. Nothing is set when the original
+// can't be read (it could not be put back).
+template <class T, class Set, class Get>
+void probeRestore(Ctx& c, T value, Set set, Get get) {
+    c.needConnection();
+    T original{};
+    HRESULT h0 = get(&original);
+    if (FAILED(h0)) {
+        c.hr("get", h0);
+        c.skip("the current value can't be read, so it could not be put back: not set");
+    }
+    probe<T>(c, value, set, get, false);
+    // Put back only if it changed: a refused set (e.g. E_NOTIMPL) left it alone.
+    T now{};
+    if (SUCCEEDED(get(&now)) && same(now, original)) return;
+    HRESULT hr = set(original);
+    c.settle();
+    T back{};
+    HRESULT hb = get(&back);
+    c.expect(SUCCEEDED(hb) && same(back, original),
+             QString("the original value was not put back (set %1, now %2, was %3)")
+                 .arg(hrText(hr), js(back).toVariant().toString(), js(original).toVariant().toString()));
 }
 
 // Records a getter's HRESULT and value under `name`.

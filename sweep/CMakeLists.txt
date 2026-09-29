@@ -7,7 +7,7 @@ project(atem-sweep VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8> $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 add_compile_definitions(NOMINMAX)
 
 if(NOT ATEM_SDK_DIR)
@@ -31,6 +31,9 @@ add_executable(atem-sweep
     src/tests_common.h
     src/tests_connect.cpp
     src/tests_probe.cpp
+    src/tests_access.h
+    src/tests_access.cpp
+    src/tests_generated.cpp
     src/probe_ifaces.inc
     src/tests_inputs.cpp
     src/tests_mixeffect.cpp

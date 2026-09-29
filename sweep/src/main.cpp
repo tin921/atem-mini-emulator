@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
     QCommandLineOption outDir("out", "Output folder (default: runs\\<time>-<mode>).", "dir");
     QCommandLineOption yes("yes", "Do not ask before changing the switcher's output.");
     QCommandLineOption allowCamera("allow-camera", "Also send camera actions (autofocus) to Blackmagic cameras.");
+    QCommandLineOption allowMicPower("allow-mic-power", "Also switch plug-in power on the mic inputs (put back after).");
     QCommandLineOption coverageDir("coverage-dir", "Folder with tier1-plugin.txt, tier2-samples.txt, excluded.txt.", "dir");
     QCommandLineOption capture("capture", "Run no tests: only the recording proxy on 127.0.0.1:9910, for another "
                                           "client (e.g. ATEM Software Control), for this many seconds or until "
@@ -73,7 +74,8 @@ int main(int argc, char** argv) {
     QCommandLineOption restore("restore", "Put the switcher's macros and stills back to a backup folder, then take "
                                           "a new backup and compare it with that folder. Asks first unless --yes.",
                                "backup");
-    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture, backup, compare, restore });
+    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, allowMicPower, coverageDir, capture, backup, compare,
+                   restore });
     p.process(app);
 
     if (p.isSet(compare)) {
@@ -87,6 +89,7 @@ int main(int argc, char** argv) {
 
     registerConnectTests();
     registerProbeTests();
+    registerGeneratedTests();
     registerInputTests();
     registerMixEffectTests();
     registerKeyTests();
@@ -99,6 +102,7 @@ int main(int argc, char** argv) {
     opt.listOnly = p.isSet(list);
     opt.only = p.value(only);
     opt.allowCamera = p.isSet(allowCamera);
+    opt.allowMicPower = p.isSet(allowMicPower);
     opt.coverageDir = p.isSet(coverageDir) ? p.value(coverageDir) : QString(SWEEP_COVERAGE_DIR);
 
     Switcher s;
