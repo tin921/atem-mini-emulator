@@ -1,17 +1,18 @@
 # tools
 
-Protocol capture tool for the ATEM Mini — used to extract macro metadata and
-protocol field values from real hardware to keep the emulator accurate.
+`capture.exe` (`tools/capture-bmd.cpp`) is the first capture tool, from before
+[atem-sweep](../sweep). It connects to an ATEM Mini through the BMDSwitcherAPI
+COM SDK (USB or Ethernet) and logs what the SDK exposes: product name, macro
+names and descriptions, and macro run-status values. SDK-level only — no
+packet bytes.
 
-See [capture.md](capture.md) for the reverse-engineering background and workflow.
+**It changes the switcher:** to read the run-status values it runs and stops
+up to five of the stored macros, so the live output changes while it runs.
 
-## capture.exe
+Recording the switcher for the emulator is now done with atem-sweep (see
+[capture.md](capture.md)); this tool is only a quick listing.
 
-Connects to an ATEM Mini via USB or Ethernet using the BMDSwitcherAPI COM SDK.
-Captures macro names, descriptions, and run-status values and writes them to
-`captured-output.log`.
-
-**Build** (Developer PowerShell for VS 2022, run once):
+**Build** (Developer PowerShell for VS 2022):
 
 ```powershell
 cd tools
@@ -27,5 +28,4 @@ cmake --build build --config Release
 .\build\Release\capture.exe 192.168.10.240   # Ethernet
 ```
 
-Output is written to `captured-output.log` in the current directory.
-See [capture.exe.md](capture.exe.md) for full output format details.
+Output goes to the console and to `captured-output.log` next to `capture.exe`.

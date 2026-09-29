@@ -45,7 +45,8 @@ atem-sweep 127.0.0.2 --capture 600 --out runs\asc-emu    # to the emulator
 ```
 
 It stops after the given seconds, or when a file named `stop` appears in the
-output folder, and writes `wire.jsonl`.
+output folder, and writes `wire.jsonl`. (Not yet used with ATEM Software
+Control: that capture is still to do.)
 
 ---
 
@@ -62,9 +63,9 @@ Keep the old record: the differences are the change.
 
 ## Other tools
 
-- `tools/capture-bmd.cpp` (`capture.exe`): lists what the SDK exposes over
-  USB or Ethernet (macro names, run status). SDK-level only, no packet bytes;
-  see [capture.exe.md](capture.exe.md).
+- `tools/capture-bmd.cpp` (`capture.exe`): an older SDK-level listing (macro
+  names, run status), no packet bytes. It **runs** stored macros; see
+  [tools.md](tools.md).
 
 ## Protocol reference
 

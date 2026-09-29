@@ -1,11 +1,11 @@
 # ATEM Mini Emulator
 
 A Windows desktop application that emulates a Blackmagic ATEM Mini video
-switcher on UDP port 9910, for the official BMDSwitcherAPI COM SDK and ATEM
-Software Control.
+switcher on UDP port 9910, for the official BMDSwitcherAPI COM SDK (ATEM
+Software Control: not yet verified, see below).
 
 Use it to develop, test, and demonstrate ATEM-connected software — including
-the companion [obs-atem](https://github.com/TBD) OBS Studio plugin — without
+the companion [obs-atem](https://github.com/tin921/obs-atem) OBS Studio plugin — without
 needing a physical switcher.
 
 The switcher behind the window is the [emulator core](core): the state and
@@ -25,7 +25,7 @@ as the real device.
 
 | Capability | Details |
 | --- | --- |
-| ATEM Mini protocol | The real device's handshake, connect dump (364 fields), acknowledgements and resends; 33 commands with the device's own checks, clamps and quirks |
+| ATEM Mini protocol | The real device's handshake, connect dump (364 fields), acknowledgements and resends; 36 commands with the device's own checks, clamps and quirks |
 | Source switching | Program bus: Black, Camera 1–4, Color Bars (plus the switcher's colour generators and media player inputs from clients) |
 | Picture-in-Picture | Upstream key 1 as a DVE key, like the ATEM Mini: size, position, border, border colour, crop (DVE mask) |
 | Transitions | Cut, auto transition, T-bar and fade to black run frame by frame (1080p24) |
@@ -96,8 +96,8 @@ In the panel settings (⚙), connect to **Manual IP** → `127.0.0.1`.
 ## Using the GUI
 
 Everything in the window goes through the switcher's command handlers — the
-same ones the SDK's commands use — so the window, ATEM Software Control, the
-SDK and the OBS plugin always show the same state.
+same ones the SDK's commands use — so the window, SDK clients such as the OBS
+plugin, and every other connected client show the same state.
 
 ### Program bus
 
@@ -164,8 +164,8 @@ launch, on `0.0.0.0:9910` unless `--listen` says otherwise.
 
 | Project | Role |
 | --- | --- |
-| [obs-atem](https://github.com/TBD) | OBS Studio C++ plugin — macro and PiP panels, connects to real ATEM hardware or this emulator |
-| ATEM Software Control | Official Blackmagic app — connects to real hardware or this emulator |
+| [obs-atem](https://github.com/tin921/obs-atem) | OBS Studio C++ plugin — macro, PiP and Views panels, connects to real ATEM hardware or this emulator |
+| ATEM Software Control | Official Blackmagic app — connects to real hardware; with this emulator not yet verified |
 | BMDSwitcherAPI SDK | Blackmagic COM SDK used by obs-atem and the capture tools |
 
 ---

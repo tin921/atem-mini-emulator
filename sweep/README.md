@@ -7,9 +7,9 @@ capture of every network packet); run it against the **emulator** to check
 the emulator answers the same way.
 
 ```text
-[ 19/272] ✓ me.program.1          Program -> Camera 1           280 ms
-[ 28/272] ✓ me.program.bad.5      Program -> 5 (bad)            251 ms
-[ 92/272] ✗ fly.x.8p59            PiP position X = 8.59          ...
+[ 19/273] ✓ me.program.1          Program -> Camera 1           280 ms
+[ 28/273] ✓ me.program.bad.5      Program -> 5 (bad)            251 ms
+[ 92/273] ✗ fly.x.8p59            PiP position X = 8.59          ...
         diff: readback: golden 8.59, got 8.6
 ```
 

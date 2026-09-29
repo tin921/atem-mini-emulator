@@ -25,8 +25,9 @@ atem-emu --verbose                # log every command and reply
 atem-emu --profile <folder>       # another recorded switcher
 ```
 
-Connect anything that speaks to an ATEM (the obs-atem plugin, `atem-cli
---ip`, ATEM Software Control, atem-sweep) to this PC's address.
+Connect anything that speaks to an ATEM through the SDK (the obs-atem plugin,
+`atem-cli --ip`, atem-sweep) to this PC's address. ATEM Software Control
+against the emulator is not yet verified.
 
 ### Checking it against the real switcher
 
