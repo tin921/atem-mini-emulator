@@ -4,6 +4,8 @@
 //   record:  atem-sweep 192.168.0.240                 (golden record + wire capture)
 //   verify:  atem-sweep 127.0.0.1 --verify golden.json (emulator vs the real device)
 //   usb:     atem-sweep usb                           (API only, no wire capture)
+//   backup:  atem-sweep 192.168.0.240 --backup [--out DIR]   (read-only: state, macros, stills)
+//   compare: atem-sweep --compare DIR1 DIR2                  (two backups)
 //
 // Safety policy: reads everything, changes settings and puts them back, runs
 // and stops macros. Never deletes, uploads, clears, records or streams.
@@ -20,6 +22,7 @@
 #include <cstdio>
 #include <iostream>
 
+#include "backup.h"
 #include "runner.h"
 #include "wireproxy.h"
 
@@ -27,6 +30,9 @@
 
 #ifndef SWEEP_COVERAGE_DIR
 #define SWEEP_COVERAGE_DIR "coverage"
+#endif
+#ifndef SWEEP_BACKUP_DIR
+#define SWEEP_BACKUP_DIR "backups"
 #endif
 
 static void enableConsole() {
@@ -60,8 +66,20 @@ int main(int argc, char** argv) {
     QCommandLineOption capture("capture", "Run no tests: only the recording proxy on 127.0.0.1:9910, for another "
                                           "client (e.g. ATEM Software Control), for this many seconds or until "
                                           "a file named \"stop\" appears in the output folder.", "seconds");
-    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture });
+    QCommandLineOption backup("backup", "Run no tests: take a full backup (state, macros, stills) into the output "
+                                        "folder. Read-only.");
+    QCommandLineOption compare("compare", "Compare two backup folders (given as the two arguments) and exit.");
+    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture, backup, compare });
     p.process(app);
+
+    if (p.isSet(compare)) {
+        if (p.positionalArguments().size() != 2) {
+            QTextStream(stdout) << "--compare needs two backup folders\n";
+            return 2;
+        }
+        QTextStream out(stdout);
+        return compareBackups(p.positionalArguments()[0], p.positionalArguments()[1], out);
+    }
 
     registerConnectTests();
     registerInputTests();
@@ -114,6 +132,35 @@ int main(int argc, char** argv) {
         }
         QTextStream(stdout) << "Wrote " << QDir::toNativeSeparators(dir + "/wire.jsonl") << "\n";
         return 0;
+    }
+
+    if (p.isSet(backup)) {
+        QString t = target.compare("usb", Qt::CaseInsensitive) == 0 ? QString() : target;
+        bool loopback = t == "127.0.0.1" || t.compare("localhost", Qt::CaseInsensitive) == 0;
+        bool proxy = !p.isSet(noProxy) && !t.isEmpty() && !loopback;
+        // Backups hold the switcher's stored macros and stills: by default they
+        // go to the source tree's backups/ (not the build folder, not in git).
+        QString dir = p.isSet(outDir) ? p.value(outDir)
+                                      : QString(SWEEP_BACKUP_DIR) + "/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+        WireProxy* wire = nullptr;
+        if (proxy) {
+            wire = new WireProxy(QHostAddress::LocalHost, QHostAddress(t));
+            QString error;
+            if (!wire->startProxy(&error)) {
+                QTextStream(stdout) << "Cannot start the proxy on 127.0.0.1:9910: " << error << "\n";
+                delete wire;
+                return 2;
+            }
+        }
+        QTextStream out(stdout);
+        out << "atem-sweep backup (read-only)  target: " << (t.isEmpty() ? QString("USB") : t) << "\n" << Qt::flush;
+        int rc = takeBackup(s, wire, proxy ? QString("127.0.0.1") : t, t, dir, out);
+        s.disconnect();
+        if (wire) {
+            wire->stopProxy();
+            delete wire;
+        }
+        return rc;
     }
 
     opt.target = target.compare("usb", Qt::CaseInsensitive) == 0 ? QString() : target;

@@ -71,6 +71,30 @@ atem-sweep 192.168.0.240 --only fly.  # just the PiP position/size tests
 Needs ATEM Software Control installed (the SDK's COM library) and Qt's `bin`
 folder on `PATH` (or run `windeployqt atem-sweep.exe`).
 
+## Backup
+
+A full backup of the switcher through the SDK, so that tests which create,
+change and delete stored content (macros, stills) can later run safely and
+everything can be put back. Backups are a safety net and a troubleshooting
+aid only; the reverse-engineering data is the sweep's recorded responses.
+
+```powershell
+atem-sweep 192.168.0.240 --backup            # read-only; into backups\<time>
+atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences
+```
+
+| In the backup folder | What |
+|---|---|
+| `manifest.json` | target, product, time, every macro and still slot in use (name, description, size, SHA-256; stills also the switcher's own hash, size and pixel format), and any problem |
+| `state.txt` | the connect dump: every state field the switcher sends a new client (364 on the ATEM Mini), one `NAME HEX` per line. Needs Ethernet: over USB there is no state |
+| `macros/NN.bin` | each stored macro's bytes (`MacroPool::Download`) |
+| `stills/NN.raw` | each stored still's frame as the switcher sends it (the ATEM Mini: 10-bit YUVA, 1920×1080) |
+
+Taking a backup only downloads; it never changes the switcher. A backup that
+misses anything says so (`"complete": false`, exit code 3). Backups go to
+`sweep/backups/`, which git ignores: they hold your stored macros and
+stills. Restoring a backup is the next step (not built yet).
+
 ## Golden record
 
 [golden/atem-mini_sdk10.2.1_proto2.30/](golden/atem-mini_sdk10.2.1_proto2.30) is the

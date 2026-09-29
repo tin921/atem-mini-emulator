@@ -15,10 +15,12 @@ if(NOT ATEM_SDK_DIR)
         CACHE PATH "Blackmagic ATEM SDK Windows folder (contains include/BMDSwitcherAPI.h)")
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network)
 
 add_executable(atem-sweep
     src/main.cpp
+    src/backup.h
+    src/backup.cpp
     src/runner.h
     src/runner.cpp
     src/snapshot.cpp
@@ -36,5 +38,6 @@ add_executable(atem-sweep
 )
 
 target_include_directories(atem-sweep PRIVATE "${ATEM_SDK_DIR}/include" src)
-target_compile_definitions(atem-sweep PRIVATE SWEEP_COVERAGE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/coverage")
-target_link_libraries(atem-sweep PRIVATE Qt6::Core Qt6::Network ole32 oleaut32 uuid)
+target_compile_definitions(atem-sweep PRIVATE SWEEP_COVERAGE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/coverage"
+                                              SWEEP_BACKUP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/backups")
+target_link_libraries(atem-sweep PRIVATE Qt6::Core Qt6::Gui Qt6::Network ole32 oleaut32 uuid)

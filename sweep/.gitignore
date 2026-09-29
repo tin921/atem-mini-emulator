@@ -1,2 +1,4 @@
 # Ad-hoc runs; the reference record lives in golden/
 runs/
+# Backups of a switcher (its macros and stills): local only
+backups/
