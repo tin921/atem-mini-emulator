@@ -114,3 +114,32 @@ void* accessObject(Ctx& c, const char* keyText) {
     if (key == "IBMDSwitcherMediaPool") return qi<IBMDSwitcherMediaPool>(c.s.sw);
     return nullptr;
 }
+
+void restoreAll(Ctx& c, Saved& saved) {
+    for (int pass = 0; pass < 2; ++pass) {
+        bool any = false;
+        for (SavedValue& v : saved.values) {
+            if (!v.unchanged()) {
+                v.put();
+                any = true;
+            }
+        }
+        if (!any) break;
+        c.settle();
+    }
+    for (SavedValue& v : saved.values)
+        c.expect(v.unchanged(), v.name + " was not put back");
+}
+
+void saveKeyFrameStored(Ctx& c, Saved& saved, const char* key) {
+    if (!c.s.fly) return;
+    BMDSwitcherFlyKeyFrame which = QByteArray(key).endsWith("#B") ? bmdSwitcherFlyKeyFrameB : bmdSwitcherFlyKeyFrameA;
+    IBMDSwitcherKeyFlyParameters* fly = c.s.fly;
+    BOOL stored = FALSE;
+    if (FAILED(fly->IsKeyFrameStored(which, &stored))) return;
+    fly->AddRef();
+    saved.refs.push_back(fly);
+    saved.values.push_back({ QString("keyframe %1 stored").arg(which == bmdSwitcherFlyKeyFrameB ? "B" : "A"),
+                             [fly, which, stored] { BOOL now = FALSE; return SUCCEEDED(fly->IsKeyFrameStored(which, &now)) && (now != FALSE) == (stored != FALSE); },
+                             [fly, which, stored] { return stored ? fly->StoreAsKeyFrame(which) : fly->ClearKeyFrame(which); } });
+}

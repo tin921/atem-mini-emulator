@@ -21,12 +21,20 @@ then the SDK samples, then everything else (see [Coverage](#coverage)).
 
 ## Safety policy
 
-It **reads everything**, **changes settings and puts them back** (program /
-preview, key, PiP position / size / crop, transitions, input names, …) and
-**runs / stops the stored macros**. It **never deletes, uploads, clears,
-records or streams** — no macro recording or deleting, no still capture,
-no saving the startup state, no video mode change. The full list is
-[coverage/excluded.txt](coverage/excluded.txt).
+It **reads everything**, **changes settings and puts each back** (checked
+per test: program / preview, keys, PiP, transitions, colour generators, the
+HDMI-out source, Fairlight audio, …) and **runs / stops the stored macros**.
+
+**Stored content** — macros and stills — is created, listed, changed and
+deleted only by the storage tests (`s.`), and only inside a
+**backup-protected run**: a complete backup first (the storage tests are
+skipped otherwise), then the tests, which use empty slots and delete what
+they make, then the backup is restored and verified (see [Backup](#backup)).
+That needs Ethernet (the recording proxy).
+
+It **never** saves or clears the startup state (it can't be read back),
+changes the video mode (every output goes black), records or streams. The
+full list is [coverage/excluded.txt](coverage/excluded.txt).
 
 What "puts them back" covers is exactly the settings in the snapshot
 ([src/snapshot.cpp](src/snapshot.cpp)), taken right after connecting. At the
@@ -39,13 +47,15 @@ the macro tests run them; those are not restored.
 It will not start (exit code 4, nothing changed) while a macro is being
 recorded or is running: the sweep's commands would end up in the recording.
 
-It does visibly change the live output while it runs (inputs switch, the
-PiP moves, macros run, a short fade to black), so it asks before starting
-(`--yes` skips the question).
+It does visibly and audibly change the live output while it runs (inputs
+switch, the PiP moves, macros run, a short fade to black, the HDMI output's
+source and audio levels change for a moment), so run it when the switcher is
+not in use; it asks before starting (`--yes` skips the question).
 
 The few SDK calls it never makes are listed, with reasons, in
 [coverage/excluded.txt](coverage/excluded.txt). Camera actions (autofocus)
-only run with `--allow-camera`.
+only run with `--allow-camera`, mic plug-in power only with
+`--allow-mic-power`.
 
 ## Usage
 

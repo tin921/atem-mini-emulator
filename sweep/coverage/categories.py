@@ -1,30 +1,33 @@
 """Sorts every method of the switcher SDK into six categories.
 
-    python categories.py <results.json of an emulator verify run>
+    python categories.py --verify <emulator verify run>/results.json
+                         [--record <real ATEM record run>/results.json ...]
 
 Every callable method of BMDSwitcherAPI (sdk-api.json without the legacy
 _vX interfaces and without callback interfaces, which a client implements
 rather than calls) gets exactly one category, in this order:
 
   supported (the ATEM Mini has it and it is safe)
-    1 emulator     called by atem-sweep in the given emulator verify run
-                   (verified: the emulator answers like the real ATEM)
+    1 emulator     emulated and verified: in the emulator verify run, every
+                   test that calls it passed (per-test "sdk" lists; a run
+                   without them counts as a whole and must have no failures)
     2 samples      used by the SDK samples (tier2-samples.txt), not yet in 1
-    3 sweep        every other method the ATEM Mini has and that is safe:
-                   still to be recorded by the sweep and emulated
+    3 sweep        every other method the ATEM Mini has and that is safe
+                   (2 and 3 say whether a --record run already recorded
+                   them on the real ATEM: then only the emulator is to do)
     4 hardware     needs-hardware.txt: needs hardware the test setup lacks
                    (a HyperDeck, a Blackmagic camera); not a sweep target yet
   unsupported (never sweep targets)
-    5 not on mini  not-on-mini.txt (recorded or expected)
-    6 destructive  excluded.txt (deletes, overwrites stored content, records,
-                   streams), except opt-in actions such as camera autofocus
+    5 not on mini  not-on-mini.txt (recorded by the probe)
+    6 destructive  excluded.txt (can't be undone, e.g. the startup state),
+                   except opt-in actions such as camera autofocus
 
 Writes api-supported.tsv, api-unsupported.tsv and api-categories.txt (the
 counts, which add up to the SDK's total) next to this script.
 """
+import argparse
 import json
 import os
-import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -37,13 +40,33 @@ def lines(name):
                 yield line.split('\t')
 
 
+def verified_methods(run):
+    """Methods whose every calling test passed (or the run's calls, if clean)."""
+    tests = run.get('tests', [])
+    if any('sdk' in t for t in tests):
+        ok, bad = set(), set()
+        for t in tests:
+            (ok if t.get('status') in ('pass', 'skip') else bad).update(t.get('sdk', []))
+        return ok - bad, None
+    failed = sum(1 for t in tests if t.get('status') == 'fail')
+    return set(run['coverage']['called']), failed
+
+
 def main():
-    if len(sys.argv) != 2:
-        sys.exit(__doc__)
-    run = json.load(open(sys.argv[1], encoding='utf-8'))
-    called = set(run['coverage']['called'])
-    summary = run.get('summary', {})
-    failed = summary.get('failed', 0) if isinstance(summary, dict) else 0
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('verify_positional', nargs='?', help=argparse.SUPPRESS)
+    ap.add_argument('--verify', help='results.json of an emulator verify run')
+    ap.add_argument('--record', action='append', default=[], help='results.json of a real-ATEM record run')
+    a = ap.parse_args()
+    verify_path = a.verify or a.verify_positional
+    if not verify_path:
+        ap.error('--verify is required')
+
+    verify = json.load(open(verify_path, encoding='utf-8'))
+    emulated, failed_whole_run = verified_methods(verify)
+    recorded = set()
+    for path in a.record:
+        recorded |= set(json.load(open(path, encoding='utf-8'))['coverage']['called'])
 
     api = json.load(open(os.path.join(HERE, 'sdk-api.json'), encoding='utf-8'))
     methods = [f'{i}::{m}' for i, ms in sorted(api.items())
@@ -59,8 +82,8 @@ def main():
     supported, unsupported = [], []
     for m in methods:
         iface = m.split('::')[0]
-        if m in called:
-            supported.append((m, '1 emulator', 'verified against the real ATEM record'))
+        if m in emulated:
+            supported.append((m, '1 emulator', 'recorded on the real ATEM, emulated and verified'))
         elif m in not_on_mini or iface in not_on_mini:
             evidence, reason = not_on_mini.get(m) or not_on_mini[iface]
             unsupported.append((m, '5 not on mini', f'{evidence}: {reason}'))
@@ -70,7 +93,7 @@ def main():
             supported.append((m, '4 hardware', 'needs ' + (hardware.get(m) or hardware[iface])))
         else:
             cat = '2 samples' if m in samples else '3 sweep'
-            note = 'used by the SDK samples; to record and emulate' if m in samples else 'to record and emulate'
+            note = 'recorded on the real ATEM; emulator to do' if m in recorded else 'not recorded yet'
             if m in opt_in:
                 note += f' (opt-in: {opt_in[m]})'
             supported.append((m, cat, note))
@@ -81,25 +104,32 @@ def main():
             for row in rows:
                 f.write('\t'.join(row) + '\n')
 
-    write('api-supported.tsv', supported, 'SDK methods the ATEM Mini has and the sweep may exercise')
+    write('api-supported.tsv', supported, 'SDK methods the ATEM Mini has and the sweep exercises')
     write('api-unsupported.tsv', unsupported, 'SDK methods the sweep never calls')
 
-    counts = {}
+    counts, todo = {}, {}
     for _, cat, note in supported + unsupported:
         counts[cat] = counts.get(cat, 0) + 1
-    expected = sum(1 for _, cat, note in unsupported if cat == '5 not on mini' and note.startswith('expected'))
+        if cat in ('2 samples', '3 sweep'):
+            key = 'recorded' if note.startswith('recorded') else 'not recorded'
+            todo[key] = todo.get(key, 0) + 1
+    name = lambda p: os.path.basename(os.path.dirname(os.path.abspath(p)))
     out = [f'SDK methods (current interfaces, callbacks excluded): {len(methods)}',
-           f'emulator verify run: {os.path.basename(os.path.dirname(os.path.abspath(sys.argv[1])))}'
-           + (f' — WARNING: {failed} failed tests; category 1 assumes a passing run' if failed else ''),
+           f'emulator verify run: {name(verify_path)}'
+           + (f' — WARNING: {failed_whole_run} failed tests and no per-test calls; category 1 assumes a passing run'
+              if failed_whole_run else ''),
+           'real ATEM record runs: ' + (', '.join(name(p) for p in a.record) or 'none given'),
            '',
            f'supported    {len(supported):5}',
-           f'  1 emulator    {counts.get("1 emulator", 0):5}   recorded on the real ATEM and emulated (verified)',
+           f'  1 emulator    {counts.get("1 emulator", 0):5}   recorded on the real ATEM, emulated and verified',
            f'  2 samples     {counts.get("2 samples", 0):5}   used by the SDK samples, not yet emulated',
-           f'  3 sweep       {counts.get("3 sweep", 0):5}   other safe ATEM Mini functions, still to record and emulate',
+           f'  3 sweep       {counts.get("3 sweep", 0):5}   other safe ATEM Mini functions, not yet emulated',
+           f'                       (2 + 3: {todo.get("recorded", 0)} recorded, emulator to do; '
+           f'{todo.get("not recorded", 0)} not recorded yet)',
            f'  4 hardware    {counts.get("4 hardware", 0):5}   need hardware the test setup lacks (HyperDeck, Blackmagic camera)',
            f'unsupported  {len(unsupported):5}',
-           f'  5 not on mini {counts.get("5 not on mini", 0):5}   ({expected} of them expected, to confirm with a read-only probe)',
-           f'  6 destructive {counts.get("6 destructive", 0):5}   deletes, overwrites stored content, records',
+           f'  5 not on mini {counts.get("5 not on mini", 0):5}   recorded by the probe on the real ATEM',
+           f'  6 destructive {counts.get("6 destructive", 0):5}   can\'t be undone (startup state, video mode, recording)',
            f'total        {len(supported) + len(unsupported):5}']
     assert len(supported) + len(unsupported) == len(methods)
     text = '\n'.join(out) + '\n'

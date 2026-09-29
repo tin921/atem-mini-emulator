@@ -1,30 +1,22 @@
-# SDK calls atem-sweep deliberately never makes (safety policy: it reads,
-# changes settings and puts them back, runs/stops macros — it never deletes,
-# overwrites stored media or macros, records or streams, and never changes
-# the video mode or the saved startup state). categories.py counts these as
-# "destructive", except opt-in actions (a reason containing --allow-...).
+# SDK calls atem-sweep never makes. Everything else is exercised: settings
+# are changed and put back; stored content (macros, stills) is created,
+# changed and deleted only by the storage tests (s.), inside a backup-
+# protected run (backup first, restore and verify after; see README).
+# What stays here can't be undone, needs hardware the setup lacks, or does
+# not exist on the ATEM Mini. categories.py counts these as "destructive",
+# except opt-in actions (a reason containing --allow-...).
 # Interface::Method<TAB>reason
-IBMDSwitcherStills::Upload	overwrites a still in the media pool
-IBMDSwitcherClip::UploadFrame	overwrites clip frames in the media pool
-IBMDSwitcherClip::SetValid	writes clip metadata into the media pool
-IBMDSwitcherClip::SetInvalid	deletes a clip from the media pool
-IBMDSwitcherRecordAV::StartRecording	starts recording
-IBMDSwitcherRecordAV::StopRecording	stops a recording (only meaningful after starting one)
-IBMDSwitcherRecordAV::SwitchDisk	switches the recording disk mid-recording
-IBMDSwitcherStreamRTMP::StartStreaming	goes live on the internet
-IBMDSwitcherStreamRTMP::StopStreaming	stops a live stream (only meaningful after starting one)
-IBMDSwitcherCameraControl::SetFlags	camera action (instant autofocus) on a Blackmagic camera; runs with --allow-camera
-IBMDSwitcherMacroPool::Delete	deletes a stored macro
-IBMDSwitcherMacroPool::Upload	overwrites a macro slot
-IBMDSwitcherMacroControl::Record	records into a macro slot (overwrites it)
-IBMDSwitcherMacroControl::RecordUserWait	part of recording a macro
-IBMDSwitcherMacroControl::RecordPause	part of recording a macro
-IBMDSwitcherMacroControl::StopRecording	part of recording a macro
-IBMDSwitcherMediaPool::Clear	clears the media pool
-IBMDSwitcherStillCapture::CaptureStill	captures the program into a media pool still (overwrites it)
-IBMDSwitcherSaveRecall::Save	overwrites the saved startup state
-IBMDSwitcherSaveRecall::Clear	clears the saved startup state
-IBMDSwitcher::SetVideoMode	a video mode change can clear the media pool and reconfigures the switcher
+IBMDSwitcherSaveRecall::Save	overwrites the saved startup state (it can't be read, so it can't be put back)
+IBMDSwitcherSaveRecall::Clear	clears the saved startup state (it can't be read, so it can't be put back)
+IBMDSwitcher::SetVideoMode	reconfigures the switcher: every output goes black for a while, and it can clear the media pool
 IBMDSwitcher::SetAutoVideoMode	auto video mode can change the video mode (see SetVideoMode)
 IBMDSwitcherHyperDeck::Record	starts recording on a HyperDeck
-IBMDSwitcherStills::SetInvalid	deletes a still from the media pool
+IBMDSwitcherCameraControl::SetFlags	camera action (instant autofocus) on a Blackmagic camera; runs with --allow-camera
+IBMDSwitcherClip::UploadFrame	clips (not on the ATEM Mini)
+IBMDSwitcherClip::SetValid	clips (not on the ATEM Mini)
+IBMDSwitcherClip::SetInvalid	clips (not on the ATEM Mini)
+IBMDSwitcherRecordAV::StartRecording	starts recording (not on the ATEM Mini)
+IBMDSwitcherRecordAV::StopRecording	stops a recording (not on the ATEM Mini)
+IBMDSwitcherRecordAV::SwitchDisk	switches the recording disk (not on the ATEM Mini)
+IBMDSwitcherStreamRTMP::StartStreaming	goes live on the internet (not on the ATEM Mini)
+IBMDSwitcherStreamRTMP::StopStreaming	stops a live stream (not on the ATEM Mini)

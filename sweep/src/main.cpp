@@ -8,8 +8,11 @@
 //   compare: atem-sweep --compare DIR1 DIR2                  (two backups)
 //   restore: atem-sweep 192.168.0.240 --restore DIR          (then verifies with a new backup)
 //
-// Safety policy: reads everything, changes settings and puts them back, runs
-// and stops macros. Never deletes, uploads, clears, records or streams.
+// Safety policy: reads everything; changes settings and puts each back
+// (checked); runs and stops macros. Stored macros and stills are created,
+// changed and deleted only by the storage tests (s.), and only after a
+// complete backup, which is restored and verified at the end. Never: the
+// saved startup state, the video mode, recording or streaming.
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -90,6 +93,8 @@ int main(int argc, char** argv) {
     registerConnectTests();
     registerProbeTests();
     registerGeneratedTests();
+    registerManualTests();
+    registerStorageTests();
     registerInputTests();
     registerMixEffectTests();
     registerKeyTests();
@@ -223,7 +228,9 @@ int main(int argc, char** argv) {
                         << "  mode: " << (opt.verify ? "verify against " + opt.goldenPath : QString("record")) << "\n"
                         << "\x1b[33mThis switches inputs, moves the PiP, runs the stored macros and fades to black\n"
                         << "on the live output. The settings it changes are put back and checked at the end;\n"
-                        << "your stored macros may change others (e.g. audio), which are not. Nothing is deleted.\x1b[0m\n";
+                        << "your stored macros may change others (e.g. audio), which are not. The storage tests\n"
+                        << "create and delete macros and stills in empty slots, only after a complete backup,\n"
+                        << "which is restored and verified at the end.\x1b[0m\n";
     if (!p.isSet(yes)) {
         QTextStream(stdout) << "Continue? [y/N] " << Qt::flush;
         std::string answer;
@@ -242,8 +249,46 @@ int main(int argc, char** argv) {
         }
     }
 
+    // The storage tests (s.) change stored macros and stills. On a real
+    // switcher they only run after a complete backup, which is restored and
+    // verified afterwards. Against the emulator (--verify) they just run.
+    bool storageSelected = opt.only.isEmpty() || opt.only.startsWith("s.") || QString("s.").startsWith(opt.only);
+    QString protectDir;
+    QTextStream out(stdout);
+    if (opt.verify) {
+        opt.storageAllowed = true;
+    } else if (storageSelected) {
+        if (!wire) {
+            out << "\x1b[33mStorage tests need a verified backup, which needs Ethernet (the recording proxy): skipped.\x1b[0m\n";
+        } else {
+            protectDir = QString(SWEEP_BACKUP_DIR) + "/" + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss") + "-sweep";
+            out << "Backup before the storage tests...\n" << Qt::flush;
+            int brc = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-before", out);
+            s.disconnect();
+            opt.storageAllowed = brc == 0;
+            if (brc != 0) out << "\x1b[33mThe backup is not complete: storage tests skipped.\x1b[0m\n";
+        }
+    }
+
     int rc = runSweep(s, wire, opt);
     s.disconnect();
+
+    if (opt.storageAllowed && !protectDir.isEmpty()) {
+        out << "Restoring stored content from " << QDir::toNativeSeparators(protectDir + "-before") << "...\n" << Qt::flush;
+        int rrc = restoreBackup(s, opt.connectAddress, protectDir + "-before", out);
+        s.disconnect();
+        QThread::sleep(10);   // let the switcher settle (see the backup notes in README)
+        int vrc = takeBackup(s, wire, opt.connectAddress, opt.target, protectDir + "-after", out);
+        s.disconnect();
+        int crc = vrc == 0 ? compareBackups(protectDir + "-before", protectDir + "-after", out) : 2;
+        if (rrc != 0 || crc != 0) {
+            out << "\x1b[31mStored content is NOT back as it was: restore from "
+                << QDir::toNativeSeparators(protectDir + "-before") << " (atem-sweep <ip> --restore ...)\x1b[0m\n";
+            rc = 5;
+        } else {
+            out << "\x1b[32mStored content restored and verified.\x1b[0m\n";
+        }
+    }
     if (wire) {
         wire->stopProxy();
         delete wire;

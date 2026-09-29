@@ -29,6 +29,11 @@ QString inputName(BMDSwitcherInputId id);
 // executed, not ones a test merely claims.
 void sweepCalled(const QString& ifaceMethod);
 QStringList sweepCoverage();
+// The SDK calls of one test: cleared when a test starts, read when it ends
+// (each result lists them, so a method counts as verified only when every
+// test that calls it passes).
+void sweepTestStarted();
+QStringList sweepTestCalls();
 // The device does not expose this interface (e.g. RecordAV on a base
 // ATEM Mini): all its methods count as "not available on this model".
 void sweepUnavailable(const QString& iface);

@@ -258,6 +258,7 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
 
         QString status = "pass";
         QStringList notes;
+        sweepTestStarted();
         try {
             t.run(c);
             if (!c.problems.isEmpty()) status = "fail";
@@ -281,6 +282,7 @@ int runSweep(Switcher& s, WireProxy* wire, const Options& opt) {
             { "problems", QJsonArray::fromStringList(c.problems) },
             { "notes", QJsonArray::fromStringList(notes) },
             { "obs", c.obs }, { "events", events }, { "ms", ms },
+            { "sdk", QJsonArray::fromStringList(sweepTestCalls()) },
         };
         if (wire) r["wire"] = wire->fieldsSince(wireMark);
 

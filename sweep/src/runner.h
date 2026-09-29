@@ -22,6 +22,7 @@ struct Options {
     bool listOnly = false;
     bool allowCamera = false; // send camera actions (autofocus) to BMD cameras
     bool allowMicPower = false; // switch plug-in power on the mic inputs
+    bool storageAllowed = false; // stored content may change (backup taken first, or the emulator)
     QString coverageDir;     // tier1-plugin.txt, tier2-samples.txt, excluded.txt
 };
 
@@ -72,6 +73,8 @@ void addTest(const QString& id, const QString& title, std::function<void(Ctx&)> 
 void registerConnectTests();
 void registerProbeTests();
 void registerGeneratedTests();
+void registerManualTests();
+void registerStorageTests();
 void registerInputTests();
 void registerMixEffectTests();
 void registerKeyTests();

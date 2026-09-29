@@ -34,6 +34,9 @@ add_executable(atem-sweep
     src/tests_access.h
     src/tests_access.cpp
     src/tests_generated.cpp
+    src/tests_manual.cpp
+    src/tests_storage.cpp
+    src/transfer.h
     src/probe_ifaces.inc
     src/tests_inputs.cpp
     src/tests_mixeffect.cpp

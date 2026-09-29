@@ -8,11 +8,23 @@
 namespace {
 std::mutex g_coverageMutex;
 std::set<QString> g_coverage;
+std::set<QString> g_testCalls;   // since the current test started
 } // namespace
 
 void sweepCalled(const QString& ifaceMethod) {
     std::lock_guard<std::mutex> lock(g_coverageMutex);
     g_coverage.insert(ifaceMethod);
+    g_testCalls.insert(ifaceMethod);
+}
+
+void sweepTestStarted() {
+    std::lock_guard<std::mutex> lock(g_coverageMutex);
+    g_testCalls.clear();
+}
+
+QStringList sweepTestCalls() {
+    std::lock_guard<std::mutex> lock(g_coverageMutex);
+    return QStringList(g_testCalls.begin(), g_testCalls.end());
 }
 
 QStringList sweepCoverage() {

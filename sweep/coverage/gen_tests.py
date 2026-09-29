@@ -158,17 +158,71 @@ def simple_out(p, enums):
 
 def main():
     enums, ifaces = parse(sys.argv[1])
+    # Targets: methods not yet emulated (categories 2 and 3), plus every method
+    # generated before (generated-methods.txt), so tests don't disappear once
+    # the emulator implements a method and it moves to category 1.
     cat3 = set()
     for line in open(os.path.join(HERE, 'api-supported.tsv'), encoding='utf-8'):
         if line.startswith('#'):
             continue
         parts = line.rstrip('\n').split('\t')
-        if len(parts) > 1 and parts[1] == '3 sweep':
+        if len(parts) > 1 and parts[1] in ('2 samples', '3 sweep'):
             cat3.add(parts[0])
+    frozen = os.path.join(HERE, 'generated-methods.txt')
+    if os.path.exists(frozen):
+        cat3 |= {l.strip() for l in open(frozen, encoding='utf-8') if '::' in l and not l.startswith('#')}
+    covered = set()
 
     cb_classes = {}   # callback interface -> generated class
     body = []
+    snaps = []
     count = 0
+
+    def pairs_of(iface):
+        methods = {m['name']: m for m in ifaces[iface] if m['params'] is not None}
+        out = []
+        for n, m in methods.items():
+            if not n.startswith('Set') or m['ret'] != 'HRESULT' or len(m['params']) != 1 or m['params'][0][0] != 'in':
+                continue
+            t = m['params'][0][1]
+            k = kind(t, enums)
+            g = methods.get('Get' + n[3:])
+            if not k or not g or len(g['params']) != 1 or g['params'][0] != ('out', t + '*', g['params'][0][2]):
+                continue
+            out.append((n[3:], t, k))
+        return out
+
+    # Every settable value of each target (and its children), so a test can put
+    # back side effects too: e.g. a smaller chroma cursor moves the cursor, an
+    # EQ reset resets its bands. Plain calls (not SDK_CALL): not coverage.
+    CHILDREN = {
+        'IBMDSwitcherFairlightAudioEqualizer': [
+            '    Com<IBMDSwitcherFairlightAudioEqualizerBandIterator> it;',
+            '    if (SUCCEEDED(o->CreateIterator(__uuidof(IBMDSwitcherFairlightAudioEqualizerBandIterator), reinterpret_cast<void**>(it.out()))) && it) {',
+            '        IBMDSwitcherFairlightAudioEqualizerBand* band = nullptr;',
+            '        while (it->Next(&band) == S_OK && band) { snap_IBMDSwitcherFairlightAudioEqualizerBand(band, s); band->Release(); band = nullptr; }',
+            '    }'],
+        'IBMDSwitcherFairlightAudioDynamicsProcessor': [
+            '    { IBMDSwitcherFairlightAudioCompressor* p = nullptr; if (SUCCEEDED(o->GetProcessor(__uuidof(IBMDSwitcherFairlightAudioCompressor), reinterpret_cast<void**>(&p))) && p) { snap_IBMDSwitcherFairlightAudioCompressor(p, s); p->Release(); } }',
+            '    { IBMDSwitcherFairlightAudioLimiter* p = nullptr; if (SUCCEEDED(o->GetProcessor(__uuidof(IBMDSwitcherFairlightAudioLimiter), reinterpret_cast<void**>(&p))) && p) { snap_IBMDSwitcherFairlightAudioLimiter(p, s); p->Release(); } }',
+            '    { IBMDSwitcherFairlightAudioExpander* p = nullptr; if (SUCCEEDED(o->GetProcessor(__uuidof(IBMDSwitcherFairlightAudioExpander), reinterpret_cast<void**>(&p))) && p) { snap_IBMDSwitcherFairlightAudioExpander(p, s); p->Release(); } }'],
+    }
+    for iface in TARGETS:
+        snaps.append(f'void snap_{iface}({iface}* o, Saved& s);')
+    for iface, (prefix, _) in TARGETS.items():
+        snaps.append(f'void snap_{iface}({iface}* o, Saved& s) {{')
+        snaps.append('    o->AddRef();')
+        snaps.append('    s.refs.push_back(o);')
+        for prop, t, k in pairs_of(iface):
+            if f'{iface}::Set{prop}' in OPT_IN:
+                continue
+            snaps.append(f'    {{ {t} v{{}}; if (SUCCEEDED(o->Get{prop}(&v))) s.values.push_back({{ "{prefix}.{prop}", '
+                         f'[o, v] {{ {t} x{{}}; return SUCCEEDED(o->Get{prop}(&x)) && same(x, v); }}, '
+                         f'[o, v] {{ return o->Set{prop}(v); }} }}); }}')
+        snaps += CHILDREN.get(iface, [])
+        snaps.append('}')
+        snaps.append('')
+
     for iface, (prefix, keys) in TARGETS.items():
         methods = {m['name']: m for m in ifaces[iface] if m['params'] is not None}
         wanted = lambda n: f'{iface}::{n}' in cat3
@@ -189,6 +243,7 @@ def main():
             tag = key.split('#')[1].lower() if '#' in key else ''
             base = f'g.{prefix}' + (f'.{tag}' if tag else '')
             obj = f'Com<{iface}> o(static_cast<{iface}*>(accessObject(c, "{key}"))); if (!o) c.skip("not reachable: {key}");'
+            save = f'Saved saved; snap_{iface}(o.p, saved);' + (f' saveKeyFrameStored(c, saved, "{key}");' if '#' in key and 'KeyFrame' in iface else '')
 
             # State: every simple getter.
             getters = [m for n, m in methods.items()
@@ -224,10 +279,13 @@ def main():
                     if opt:
                         body.append(f'        if (!c.opt.{opt}) c.skip("opt-in: --{opt_flag(opt)}");')
                     body.append(f'        {obj}')
+                    body.append(f'        {save}')
                     body.append(f'        probeRestore<{t}>(c, {lit},')
                     body.append(f'            [&]({t} x) {{ return SDK_CALL({iface}, o.p, Set{prop}, x); }},')
                     body.append(f'            [&]({t}* x) {{ return SDK_CALL({iface}, o.p, Get{prop}, x); }});')
+                    body.append('        restoreAll(c, saved);')
                     body.append('    });')
+                    covered.update({f'{iface}::Set{prop}', f'{iface}::Get{prop}'})
                     count += 1
 
             # Getters with one enum/int argument.
@@ -261,19 +319,14 @@ def main():
                     continue
                 body.append(f'    addTest("{base}.{n[0].lower() + n[1:]}", "{iface}{" " + tag.upper() if tag else ""} {n}() (settings put back after)", [](Ctx& c) {{')
                 body.append(f'        {obj}')
-                for prop, t, k in pairs:
-                    body.append(f'        {t} save{prop}{{}}; HRESULT hs{prop} = SDK_CALL({iface}, o.p, Get{prop}, &save{prop});')
+                body.append(f'        {save}')
                 body.append(f'        c.hr("call", SDK_CALL({iface}, o.p, {n}));')
                 body.append('        c.settle();')
                 for prop, t, k in pairs:
                     body.append(f'        {{ {t} v{{}}; if (SUCCEEDED(SDK_CALL({iface}, o.p, Get{prop}, &v))) c.observe("after.{prop}", {jsfn(t, enums)}(v)); }}')
-                for prop, t, k in pairs:
-                    body.append(f'        if (SUCCEEDED(hs{prop})) SDK_CALL({iface}, o.p, Set{prop}, save{prop});')
-                body.append('        c.settle();')
-                for prop, t, k in pairs:
-                    body.append(f'        if (SUCCEEDED(hs{prop})) {{ {t} v{{}}; SDK_CALL({iface}, o.p, Get{prop}, &v); '
-                                f'c.expect(same(v, save{prop}), "{prop} not put back"); }}')
+                body.append('        restoreAll(c, saved);')
                 body.append('    });')
+                covered.add(f'{iface}::{n}')
                 count += 1
 
             # Callbacks.
@@ -317,6 +370,13 @@ def main():
         classes.append('};')
         classes.append('')
 
+    old = set()
+    if os.path.exists(frozen):
+        old = {l.strip() for l in open(frozen, encoding='utf-8') if '::' in l and not l.startswith('#')}
+    with open(frozen, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('# Methods gen_tests.py generates tests for (kept, so tests stay once emulated).\n')
+        f.write('\n'.join(sorted(old | {m for m in covered if m in cat3})) + '\n')
+
     src = ['// GENERATED by coverage/gen_tests.py from BMDSwitcherAPI.idl — do not edit.',
            '// Tests for the category-3 SDK methods (see coverage/api-supported.tsv).',
            '#include "tests_common.h"',
@@ -326,7 +386,7 @@ def main():
            '#include <atomic>',
            '',
            'namespace {',
-           ''] + classes + ['} // namespace', '', 'void registerGeneratedTests() {'] + body + ['}', '']
+           ''] + classes + snaps + ['} // namespace', '', 'void registerGeneratedTests() {'] + body + ['}', '']
     open(OUT, 'w', encoding='utf-8', newline='\n').write('\n'.join(src))
     print(f'{count} tests, {len(cb_classes)} callback classes -> {os.path.relpath(OUT, HERE)}')
 
