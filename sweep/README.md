@@ -19,6 +19,38 @@ then the SDK samples, then everything else (see [Coverage](#coverage)).
         diff: readback: golden 8.59, got 8.6
 ```
 
+## A test client plus a recording proxy
+
+atem-sweep is two things in one program:
+
+- **The test client** runs the tests through the Blackmagic SDK. It never
+  speaks the protocol itself: the SDK does, and the sweep records what the
+  SDK reports (return codes, read-backs, callbacks) in `results.json`.
+- **The recording proxy** ([src/wireproxy.cpp](src/wireproxy.cpp)) sits in
+  the middle. It listens on `127.0.0.1:9910` like a switcher, relays every
+  packet to the real one (a connection of its own per client) and back, and
+  records both directions, split into fields, in `wire.jsonl`. That is how
+  the golden record has the switcher's exact bytes, not only what the SDK
+  made of them.
+
+```text
+record:    atem-sweep tests ─► SDK ─► proxy 127.0.0.1 ─► real ATEM
+                                      (records both ways)
+
+verify:    atem-sweep tests ─► SDK ─► proxy 127.0.0.1 ─► emulator 127.0.0.2
+                                      (records both ways)
+
+--capture: any client, e.g. ─────────► proxy 127.0.0.1 ─► real ATEM or emulator
+           ATEM Software Control      (records both ways, no tests)
+```
+
+The proxy only relays: something real has to answer behind it. With
+`--capture` another client takes the SDK's place, so its requests and the
+switcher's answers are recorded the same way. Comparing a capture against
+the real ATEM with one against the emulator shows what that client needs
+that the emulator doesn't do yet. Over USB there is nothing to relay: no
+wire capture, and no verified backup.
+
 ## Safety policy
 
 It **reads everything**, **changes settings and puts each back** (checked
