@@ -59,6 +59,10 @@ void restoreKeyFrame(Ctx& c, BMDSwitcherFlyKeyFrame which, const KeyFrameSave& s
     if (FAILED(SDK_CALL(IBMDSwitcherKeyFlyParameters, c.s.fly, GetKeyFrameParameters, which, kf.out())) || !kf) return;
     for (size_t i = 0; i < save.values.size(); ++i)
         if (SUCCEEDED(save.values[i].first)) (kf.p->*kKeyFrameFields[i].set)(save.values[i].second);
+    // Setting values marks the keyframe stored. Let that arrive before
+    // clearing it again: the switcher answers once per frame, so without the
+    // wait whether the client ever sees "stored" depends on frame timing.
+    c.settle();
     if (!save.stored) SDK_CALL(IBMDSwitcherKeyFlyParameters, c.s.fly, ClearKeyFrame, which);
     c.settle();
     KeyFrameSave now = saveKeyFrame(c, which);

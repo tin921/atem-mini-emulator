@@ -57,9 +57,27 @@ TARGETS = {
     'IBMDSwitcherMediaPool': ('media', ['IBMDSwitcherMediaPool']),
 }
 
-# Setters that need an opt-in flag (they do more than change a setting).
+# Getters whose value means nothing unless another getter says the feature is
+# supported: the SDK then returns whatever is in memory (recorded: 4294967295 on
+# the real ATEM, 0 or 2146862410 against the emulator). Recorded as
+# informational (not compared) when unsupported.
+UNDEFINED_UNLESS = {
+    'IBMDSwitcherInput': [('GetCameraModel', 'DoesSupportCameraModel')],
+}
+
+# Methods that change stored content (stills, macros): only the storage tests
+# call them, inside a backup-protected run.
+NEVER = {
+    'IBMDSwitcherMediaPool::Clear',
+    'IBMDSwitcherStillCapture::CaptureStill',
+}
+
+# Setters that need an opt-in flag (they do more than change a setting):
+# flag, and a check (tests_access.h) of whether this value needs it. Plug-in
+# power needs --allow-mic-power only to switch it on; setting what it is,
+# switching it off (and back on) or an invalid value (refused) run without.
 OPT_IN = {
-    'IBMDSwitcherFairlightAnalogAudioInput::SetMicPowerMode': 'allowMicPower',
+    'IBMDSwitcherFairlightAnalogAudioInput::SetMicPowerMode': ('allowMicPower', 'micPowerWouldSwitchOn'),
 }
 
 INT_TYPES = {'int', 'short', 'long long', 'unsigned short', 'unsigned int', 'unsigned long long',
@@ -171,6 +189,9 @@ def main():
     frozen = os.path.join(HERE, 'generated-methods.txt')
     if os.path.exists(frozen):
         cat3 |= {l.strip() for l in open(frozen, encoding='utf-8') if '::' in l and not l.startswith('#')}
+    # Never generated: they change stored content, which only the backup-protected
+    # storage tests (tests_storage.cpp, s.) may do.
+    cat3 -= NEVER
     covered = set()
 
     cb_classes = {}   # callback interface -> generated class
@@ -264,6 +285,9 @@ def main():
                         obs = ', '.join(f'{{ "{p[2]}", {jsfn(p[1][:-1].strip(), enums)}(v{i}) }}' for i, p in enumerate(m['params']))
                         lines.append(f'            if (SUCCEEDED(hr)) c.observe("{m["name"]}", QJsonObject{{ {obs} }}); else c.observe("{m["name"]}", "error " + hrText(hr));')
                     lines.append('        }')
+                for value, support in UNDEFINED_UNLESS.get(iface, []):
+                    lines.append(f'        if (c.obs.value("{support}") == QJsonValue(false) && c.obs.contains("{value}"))')
+                    lines.append(f'            c.obs["{value} (informational)"] = c.obs.take("{value}");')
                 lines.append('    });')
                 body += lines
                 count += 1
@@ -276,9 +300,10 @@ def main():
                 for lit, vid, label in values(t, k, enums):
                     tid = f'{base}.{prop[0].lower() + prop[1:]}.{vid}'
                     body.append(f'    addTest("{tid}", "{iface}{" " + tag.upper() if tag else ""} {prop} = {label}", [](Ctx& c) {{')
-                    if opt:
-                        body.append(f'        if (!c.opt.{opt}) c.skip("opt-in: --{opt_flag(opt)}");')
                     body.append(f'        {obj}')
+                    if opt:
+                        flag, needs = opt
+                        body.append(f'        if (!c.opt.{flag} && {needs}(o.p, {lit})) c.skip("opt-in: --{opt_flag(flag)}");')
                     body.append(f'        {save}')
                     body.append(f'        probeRestore<{t}>(c, {lit},')
                     body.append(f'            [&]({t} x) {{ return SDK_CALL({iface}, o.p, Set{prop}, x); }},')

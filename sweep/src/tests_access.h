@@ -35,3 +35,13 @@ void restoreAll(Ctx& c, Saved& saved);
 // For keyframe tests ("...KeyFrameParameters#A" / "#B"): writing a keyframe's
 // values marks it as stored; this puts the stored flag back (last).
 void saveKeyFrameStored(Ctx& c, Saved& saved, const char* key);
+
+// Would setting this switch the mic input's plug-in power on? (Only that
+// needs --allow-mic-power: it powers whatever is plugged in.)
+inline bool micPowerWouldSwitchOn(IBMDSwitcherFairlightAnalogAudioInput* in,
+                                  BMDSwitcherFairlightAudioAnalogInputMicPowerMode value) {
+    BMDSwitcherFairlightAudioAnalogInputMicPowerMode now{};
+    if (FAILED(in->GetMicPowerMode(&now))) return true;
+    return value == bmdSwitcherFairlightAudioAnalogInputMicPowerModePlugInPower &&
+           now != bmdSwitcherFairlightAudioAnalogInputMicPowerModePlugInPower;
+}

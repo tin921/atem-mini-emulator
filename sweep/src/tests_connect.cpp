@@ -13,9 +13,14 @@ void connectOther(Ctx& c, const QString& address) {
     QElapsedTimer t;
     t.start();
     HRESULT hr = other.connect(address, &fail);
-    c.hr("connect", hr);
-    if (FAILED(hr)) c.observe("failReason", fourcc(static_cast<uint32_t>(fail)));
-    c.observe("connected", other.connected());
+    // When nothing answers, the SDK falls back to an ATEM on this PC's USB and
+    // connects to that (read-only here: connected, then disconnected). The
+    // outcome depends on what is plugged in, not on the switcher under test:
+    // recorded, not compared.
+    c.observe("connect (informational)", hrText(hr));
+    if (FAILED(hr)) c.observe("failReason (informational)", fourcc(static_cast<uint32_t>(fail)));
+    c.observe("connected (informational)", other.connected());
+    c.observe("note (informational)", other.connected() ? "connected through the SDK's USB fallback" : "no connection");
     c.observe("ms (informational)", static_cast<double>(t.elapsed()));
 }
 

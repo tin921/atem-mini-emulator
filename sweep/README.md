@@ -170,6 +170,49 @@ against the emulator first.
 Needs ATEM Software Control installed (the SDK's COM library) and Qt's `bin`
 folder on `PATH` (or run `windeployqt atem-sweep.exe`).
 
+## Hardware
+
+The ATEM Mini alone covers everything except 74 SDK functions, which need a
+device connected to it. Without it the switcher only answers "nothing
+connected", so a recording wouldn't show real behaviour; these functions are
+counted as category 4 ([coverage/needs-hardware.txt](coverage/needs-hardware.txt)).
+The `hyperdeck` and `camera` tests report what is connected, and what to set
+up when nothing is (`setup (informational)`, shown in the GUI and the report).
+
+| Setup | Functions | What they cover |
+|---|---:|---|
+| HyperDeck on the network | 49 | connection, clips, play, cue, loop, shuttle, remote (`IBMDSwitcherHyperDeck`, `…Clip`, iterators) |
+| Blackmagic camera on an HDMI input | 25 | camera control: focus, iris, gain, white balance, shutter, colour correction (`IBMDSwitcherCameraControl`, parameter iterator) |
+
+**HyperDeck.** Any HyperDeck with Ethernet (e.g. HyperDeck Studio HD Mini) on
+the ATEM's network with a fixed IP and **Remote** on; media with 2-3 short
+clips (the clip tests list, cue and play them). In ATEM Software Control >
+Settings > HyperDeck, put its IP in slot 1 and wait for "Connected". The ATEM
+Mini has 4 HyperDeck slots. `HyperDeck::Record` stays excluded (it writes to
+the disk).
+
+**Blackmagic camera.** A Pocket Cinema Camera 4K/6K, Micro Studio 4K or Studio
+Camera on an HDMI input; in its setup menu **Camera ID** = that input's number;
+HDMI out at the ATEM's video format; a lens with electronic focus and iris (a
+manual lens only answers "no lens"). Camera actions that move the lens
+(autofocus) only run with `--allow-camera`.
+
+When the hardware is connected: remove its lines from
+[coverage/needs-hardware.txt](coverage/needs-hardware.txt), regenerate the
+tests (`python coverage/gen_tests.py <BMDSwitcherAPI.idl>`), and record a new
+golden record; then emulate the device in the emulator core.
+
+Also worth knowing:
+
+- **Mic plug-in power.** Switching it *on* needs `--allow-mic-power` (it
+  powers whatever is plugged into the mic input). Setting what it already is,
+  switching it off and back on, and invalid values run without it.
+- **USB during emulator checks.** When an address doesn't answer, the SDK
+  falls back to an ATEM on USB. `connect.bad-address` and `connect.unreachable`
+  therefore connect (read-only, then disconnect) to the real ATEM if it is
+  plugged into this PC's USB, even in a run against the emulator. Unplug USB
+  for a fully isolated emulator run.
+
 ## Backup
 
 A full backup of the switcher through the SDK, so that tests which create,

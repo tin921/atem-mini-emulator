@@ -321,6 +321,14 @@ void registerDeviceTests() {
         it->Release();
         c.observe("hyperDecks", decks);
         if (decks.isEmpty()) unavailable({ "IBMDSwitcherHyperDeck" });
+        // The 49 HyperDeck functions need a real HyperDeck (sweep/README.md, Hardware).
+        bool connected = false;
+        for (const QJsonValue& d : decks) connected |= d["status"].toString() == "escd";
+        c.observe("setup (informational)", connected
+            ? QString("A HyperDeck is connected.")
+            : QString("No HyperDeck connected. To record the HyperDeck functions: a HyperDeck with Ethernet on the "
+                      "ATEM's network, Remote on, a fixed IP, media with 2-3 short clips; in ATEM Software Control "
+                      "> Settings > HyperDeck put its IP in slot 1 and wait for Connected."));
     });
 
     addTest("camera", "Camera control: read focus, write it back, zero offset", [](Ctx& c) {
@@ -348,6 +356,21 @@ void registerDeviceTests() {
         } else {
             c.observe("autofocus", "not sent (use --allow-camera)");
         }
+        // The camera control functions need a Blackmagic camera (sweep/README.md, Hardware):
+        // an input with one reports that it supports a camera model.
+        QStringList cameras;
+        for (IBMDSwitcherInput* in : c.s.inputs) {
+            BOOL supports = FALSE;
+            BMDSwitcherInputId id = 0;
+            if (SUCCEEDED(in->DoesSupportCameraModel(&supports)) && supports && SUCCEEDED(in->GetInputId(&id)))
+                cameras << QString::number(id);
+        }
+        c.observe("setup (informational)", !cameras.isEmpty()
+            ? "Blackmagic camera on input " + cameras.join(", ") + "."
+            : QString("No Blackmagic camera seen. To record camera control: a Pocket Cinema Camera 4K/6K, Micro "
+                      "Studio or Studio Camera on an HDMI input, Camera ID in its setup menu = that input number, "
+                      "HDMI at the ATEM's video format, a lens with electronic focus and iris. --allow-camera "
+                      "also sends autofocus (moves the lens)."));
     });
 
     addTest("record", "Recording: status and settings (never starts)", [](Ctx& c) {

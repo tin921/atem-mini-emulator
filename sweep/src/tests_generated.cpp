@@ -1327,6 +1327,8 @@ void registerGeneratedTests() {
             HRESULT hr = SDK_CALL(IBMDSwitcherInput, o.p, GetInputId, &v0);
             if (SUCCEEDED(hr)) c.observe("GetInputId", js(v0)); else c.observe("GetInputId", "error " + hrText(hr));
         }
+        if (c.obs.value("DoesSupportCameraModel") == QJsonValue(false) && c.obs.contains("GetCameraModel"))
+            c.obs["GetCameraModel (informational)"] = c.obs.take("GetCameraModel");
     });
     addTest("g.input.currentExternalPortType.externalPortTypeSDI", "IBMDSwitcherInput CurrentExternalPortType = bmdSwitcherExternalPortTypeSDI", [](Ctx& c) {
         Com<IBMDSwitcherInput> o(static_cast<IBMDSwitcherInput*>(accessObject(c, "IBMDSwitcherInput"))); if (!o) c.skip("not reachable: IBMDSwitcherInput");
@@ -11149,8 +11151,8 @@ void registerGeneratedTests() {
         restoreAll(c, saved);
     });
     addTest("g.fl.analog.micPowerMode.fairlightAudioAnalogInputMicPowerModeNoPower", "IBMDSwitcherFairlightAnalogAudioInput MicPowerMode = bmdSwitcherFairlightAudioAnalogInputMicPowerModeNoPower", [](Ctx& c) {
-        if (!c.opt.allowMicPower) c.skip("opt-in: --allow-mic-power");
         Com<IBMDSwitcherFairlightAnalogAudioInput> o(static_cast<IBMDSwitcherFairlightAnalogAudioInput*>(accessObject(c, "IBMDSwitcherFairlightAnalogAudioInput"))); if (!o) c.skip("not reachable: IBMDSwitcherFairlightAnalogAudioInput");
+        if (!c.opt.allowMicPower && micPowerWouldSwitchOn(o.p, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(1))) c.skip("opt-in: --allow-mic-power");
         Saved saved; snap_IBMDSwitcherFairlightAnalogAudioInput(o.p, saved);
         probeRestore<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(c, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(1),
             [&](BMDSwitcherFairlightAudioAnalogInputMicPowerMode x) { return SDK_CALL(IBMDSwitcherFairlightAnalogAudioInput, o.p, SetMicPowerMode, x); },
@@ -11158,8 +11160,8 @@ void registerGeneratedTests() {
         restoreAll(c, saved);
     });
     addTest("g.fl.analog.micPowerMode.fairlightAudioAnalogInputMicPowerModePlugInPower", "IBMDSwitcherFairlightAnalogAudioInput MicPowerMode = bmdSwitcherFairlightAudioAnalogInputMicPowerModePlugInPower", [](Ctx& c) {
-        if (!c.opt.allowMicPower) c.skip("opt-in: --allow-mic-power");
         Com<IBMDSwitcherFairlightAnalogAudioInput> o(static_cast<IBMDSwitcherFairlightAnalogAudioInput*>(accessObject(c, "IBMDSwitcherFairlightAnalogAudioInput"))); if (!o) c.skip("not reachable: IBMDSwitcherFairlightAnalogAudioInput");
+        if (!c.opt.allowMicPower && micPowerWouldSwitchOn(o.p, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(2))) c.skip("opt-in: --allow-mic-power");
         Saved saved; snap_IBMDSwitcherFairlightAnalogAudioInput(o.p, saved);
         probeRestore<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(c, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(2),
             [&](BMDSwitcherFairlightAudioAnalogInputMicPowerMode x) { return SDK_CALL(IBMDSwitcherFairlightAnalogAudioInput, o.p, SetMicPowerMode, x); },
@@ -11167,8 +11169,8 @@ void registerGeneratedTests() {
         restoreAll(c, saved);
     });
     addTest("g.fl.analog.micPowerMode.bad", "IBMDSwitcherFairlightAnalogAudioInput MicPowerMode = not a valid value", [](Ctx& c) {
-        if (!c.opt.allowMicPower) c.skip("opt-in: --allow-mic-power");
         Com<IBMDSwitcherFairlightAnalogAudioInput> o(static_cast<IBMDSwitcherFairlightAnalogAudioInput*>(accessObject(c, "IBMDSwitcherFairlightAnalogAudioInput"))); if (!o) c.skip("not reachable: IBMDSwitcherFairlightAnalogAudioInput");
+        if (!c.opt.allowMicPower && micPowerWouldSwitchOn(o.p, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(2021161080))) c.skip("opt-in: --allow-mic-power");
         Saved saved; snap_IBMDSwitcherFairlightAnalogAudioInput(o.p, saved);
         probeRestore<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(c, static_cast<BMDSwitcherFairlightAudioAnalogInputMicPowerMode>(2021161080),
             [&](BMDSwitcherFairlightAudioAnalogInputMicPowerMode x) { return SDK_CALL(IBMDSwitcherFairlightAnalogAudioInput, o.p, SetMicPowerMode, x); },

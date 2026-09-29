@@ -248,7 +248,11 @@ void registerProbeTests() {
         if (IBMDSwitcherInput* in = c.s.input(1)) {
             read<BOOL>(c, "input1.DoesSupportCameraModel",
                        [&](BOOL* v) { return SDK_CALL(IBMDSwitcherInput, in, DoesSupportCameraModel, v); });
-            read<unsigned int>(c, "input1.GetCameraModel",
+            // Without camera model support the SDK returns whatever is in memory:
+            // recorded, not compared.
+            BOOL modelSupported = FALSE;
+            SDK_CALL(IBMDSwitcherInput, in, DoesSupportCameraModel, &modelSupported);
+            read<unsigned int>(c, modelSupported ? "input1.GetCameraModel" : "input1.GetCameraModel (informational)",
                                [&](unsigned int* v) { return SDK_CALL(IBMDSwitcherInput, in, GetCameraModel, v); });
             read<BMDSwitcherViscaDeviceId>(c, "input1.GetViscaDeviceId",
                 [&](BMDSwitcherViscaDeviceId* v) { return SDK_CALL(IBMDSwitcherInput, in, GetViscaDeviceId, v); });

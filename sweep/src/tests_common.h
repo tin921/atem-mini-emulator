@@ -2,6 +2,7 @@
 // Shared helpers for the test groups.
 
 #include "runner.h"
+#include "wireproxy.h"
 
 #include <QJsonArray>
 #include <cmath>
@@ -65,7 +66,19 @@ void probeRestore(Ctx& c, T value, Set set, Get get) {
     HRESULT h0 = get(&original);
     if (FAILED(h0)) {
         c.hr("get", h0);
-        c.skip("the current value can't be read, so it could not be put back: not set");
+        // Not implemented for this switcher (e.g. talkback on the ATEM Mini):
+        // the set is refused by the SDK too, and the proxy shows that nothing
+        // reached the switcher, so there is nothing to put back.
+        if (h0 != E_NOTIMPL || !c.wire)
+            c.skip("the current value can't be read, so it could not be put back: not set");
+        size_t mark = c.wire->mark();
+        c.observe("value", js(value));
+        c.hr("set", set(value));
+        c.settle();
+        bool sent = !c.wire->fieldsSince(mark)["tx"].toArray().isEmpty();
+        c.observe("sentToSwitcher", sent);
+        c.expect(!sent, "a command reached the switcher for a value that can't be read back (not put back)");
+        return;
     }
     probe<T>(c, value, set, get, false);
     // Put back only if it changed: a refused set (e.g. E_NOTIMPL) left it alone.

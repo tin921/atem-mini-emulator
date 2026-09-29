@@ -223,7 +223,15 @@ void registerMacroTests() {
         addTest(QString("macro.run.%1").arg(slot), QString("Run macro slot %1 (if stored) to completion").arg(slot), [slot](Ctx& c) {
             auto* m = macros(c);
             auto valid = validMacros(c);
-            if (std::find(valid.begin(), valid.end(), slot) == valid.end()) c.skip("slot empty");
+            if (std::find(valid.begin(), valid.end(), slot) == valid.end()) {
+                // Nothing stored: what running an empty slot does (refused, stays idle).
+                c.observe("stored", false);
+                c.hr("run", SDK_CALL(IBMDSwitcherMacroControl, m, Run, slot));
+                c.observe("runStatusEvent", c.waitEvent("Macro", bmdSwitcherMacroControlEventTypeRunStatusChanged, 500));
+                c.settle(200, 1500);
+                c.observe("after", runStatus(m));
+                return;
+            }
             BSTR name = nullptr;
             SDK_CALL(IBMDSwitcherMacroPool, c.s.pool, GetName, slot, &name);
             c.observe("name", takeBstr(name));
