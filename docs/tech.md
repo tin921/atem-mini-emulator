@@ -22,16 +22,18 @@
 atem-emulator/
 ├── CMakeLists.txt              Build config — app, core, AtemVirtualCam DLL
 ├── README.md                   User-facing overview
-├── core/                       The switcher: protocol, state, commands, macros
-│   ├── src/server.*            UDP transport (handshake, reliable packets, resends)
-│   ├── src/device.*            State fields + command handlers + macro pool + view
+├── core/                       The switcher: protocol, state, commands, macros (core/README.md)
+│   ├── src/server.*            UDP transport (handshake, reliable packets, resends, per-frame answers)
+│   ├── src/device.*            State + setter table + command handlers + macros + transfers + view
+│   ├── src/setters_table.inc   Generated from tools/setters_spec.py
 │   ├── src/fields.*            Field store (the connect dump, changed in place)
 │   ├── src/commands.*          Command payload builders for a local UI
 │   ├── src/main.cpp            atem-emu: the switcher without a window
-│   ├── profiles/               Recorded switchers (dump.txt, macros.txt)
+│   ├── tools/                  Setter table source + checker/generator, record readers
+│   ├── profiles/               Recorded switchers (dump.txt, macros.txt, macro-bytes.txt)
 │   └── make_profile.py         Profile from an atem-sweep golden record
-├── sweep/                      atem-sweep: records the real ATEM, verifies the emulator
-├── docs/                       This file, sweep.md (real switcher → emulator)
+├── sweep/                      atem-sweep + atem-sweep-gui: record the real ATEM, verify the emulator
+├── docs/                       This file; the README's screenshots
 └── src/                        The emulator app (window, picture, webcam)
     ├── AtemState.h             Input ids, PiP drawing state, camera input types
     ├── InputSource.h/cpp       SolidColorSource, StaticImageSource, VideoFileSource
@@ -71,6 +73,8 @@ atem-emulator/
 - **One path for changes.** A button in the window builds the same command
   the SDK would send (`emu::cmd`) and runs it through `Device::apply`, the
   handlers the network uses. The resulting fields go to every client.
+- **Clients hear it at the next frame.** Like the real switcher, the core
+  sends changed state once per video frame (see core/README.md, Transport).
 - **The window follows the switcher.** `Device::stateChanged` (from any
   client, the window, a running transition or macro) triggers one refresh
   per event-loop pass from `Device::view()`.

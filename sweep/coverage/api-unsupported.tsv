@@ -3,7 +3,9 @@
 IBMDSwitcher::SetVideoMode	6 destructive	reconfigures the switcher: every output goes black for a while, and it can clear the media pool
 IBMDSwitcher::GetMethodForDownConvertedSD	5 not on mini	recorded: GetMethodForDownConvertedSD answers E_NOTIMPL
 IBMDSwitcher::SetMethodForDownConvertedSD	5 not on mini	recorded: GetMethodForDownConvertedSD answers E_NOTIMPL
+IBMDSwitcher::GetDownConvertedHDVideoMode	5 not on mini	recorded: GetDownConvertedHDVideoMode answers E_NOTIMPL
 IBMDSwitcher::SetDownConvertedHDVideoMode	5 not on mini	recorded: GetDownConvertedHDVideoMode answers E_NOTIMPL
+IBMDSwitcher::GetMultiViewVideoMode	5 not on mini	recorded: GetMultiViewVideoMode answers E_NOTIMPL
 IBMDSwitcher::SetMultiViewVideoMode	5 not on mini	recorded: GetMultiViewVideoMode answers E_NOTIMPL
 IBMDSwitcher::Get3GSDIOutputLevel	5 not on mini	recorded: Get3GSDIOutputLevel answers E_NOTIMPL
 IBMDSwitcher::Set3GSDIOutputLevel	5 not on mini	recorded: Get3GSDIOutputLevel answers E_NOTIMPL
@@ -88,7 +90,6 @@ IBMDSwitcherAudioRoutingOutput::GetExternalPortType	5 not on mini	recorded: not 
 IBMDSwitcherAudioRoutingOutput::GetInternalPortType	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherAudioRoutingOutput::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherAudioRoutingOutput::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherAudioRoutingOutputIterator::Next	5 not on mini	recorded: lists no AudioRoutingOutput
 IBMDSwitcherAudioRoutingOutputIterator::GetById	5 not on mini	recorded: lists no AudioRoutingOutput
 IBMDSwitcherAudioRoutingSource::GetId	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherAudioRoutingSource::GetAudioInputId	5 not on mini	recorded: not obtainable on this model
@@ -100,7 +101,6 @@ IBMDSwitcherAudioRoutingSource::GetExternalPortType	5 not on mini	recorded: not 
 IBMDSwitcherAudioRoutingSource::GetInternalPortType	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherAudioRoutingSource::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherAudioRoutingSource::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherAudioRoutingSourceIterator::Next	5 not on mini	recorded: lists no AudioRoutingSource
 IBMDSwitcherAudioRoutingSourceIterator::GetById	5 not on mini	recorded: lists no AudioRoutingSource
 IBMDSwitcherClip::GetIndex	5 not on mini	recorded: no media clips (stills only)
 IBMDSwitcherClip::IsValid	5 not on mini	recorded: no media clips (stills only)
@@ -175,7 +175,6 @@ IBMDSwitcherFairlightAudioAuxOutputInput::SetMute	5 not on mini	recorded: not ob
 IBMDSwitcherFairlightAudioAuxOutputInput::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioAuxOutputInput::RemoveCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioAuxOutputInputIterator::Next	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherFairlightAudioAuxOutputIterator::Next	5 not on mini	recorded: lists no FairlightAudioAuxOutput
 IBMDSwitcherFairlightAudioHeadphoneOutput::DoesSupportSolo	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioHeadphoneOutput::DoesSupportMute	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioHeadphoneOutput::GetGain	5 not on mini	recorded: not obtainable on this model
@@ -194,7 +193,6 @@ IBMDSwitcherFairlightAudioHeadphoneOutput::GetInputSidetoneGain	5 not on mini	re
 IBMDSwitcherFairlightAudioHeadphoneOutput::SetInputSidetoneGain	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioHeadphoneOutput::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioHeadphoneOutput::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherFairlightAudioHeadphoneOutputIterator::Next	5 not on mini	recorded: lists no FairlightAudioHeadphoneOutput
 IBMDSwitcherFairlightAudioSolo::GetSolo	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioSolo::SetSolo	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherFairlightAudioSolo::GetSoloInput	5 not on mini	recorded: not obtainable on this model
@@ -254,7 +252,6 @@ IBMDSwitcherKeyChromaParameters::GetNarrow	5 not on mini	recorded: classic chrom
 IBMDSwitcherKeyChromaParameters::SetNarrow	5 not on mini	recorded: classic chroma key (the Mini has the advanced chroma key only)
 IBMDSwitcherKeyChromaParameters::AddCallback	5 not on mini	recorded: classic chroma key (the Mini has the advanced chroma key only)
 IBMDSwitcherKeyChromaParameters::RemoveCallback	5 not on mini	recorded: classic chroma key (the Mini has the advanced chroma key only)
-IBMDSwitcherMediaPool::CreateAudio	5 not on mini	recorded: no clips (frame total 0, IBMDSwitcherClip not obtainable)
 IBMDSwitcherMediaPool::GetFrameTotalForClips	5 not on mini	recorded: no clips (frame total 0, IBMDSwitcherClip not obtainable)
 IBMDSwitcherMediaPool::GetClipMaxFrameCounts	5 not on mini	recorded: no clips (frame total 0, IBMDSwitcherClip not obtainable)
 IBMDSwitcherMediaPool::SetClipMaxFrameCounts	5 not on mini	recorded: no clips (frame total 0, IBMDSwitcherClip not obtainable)
@@ -275,7 +272,6 @@ IBMDSwitcherMixMinusOutput::HasMinusAudioInputId	5 not on mini	recorded: not obt
 IBMDSwitcherMixMinusOutput::GetMinusAudioInputId	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMixMinusOutput::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMixMinusOutput::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherMixMinusOutputIterator::Next	5 not on mini	recorded: lists no MixMinusOutput
 IBMDSwitcherMultiView::CanChangeLayout	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMultiView::GetLayout	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMultiView::SetLayout	5 not on mini	recorded: not obtainable on this model
@@ -312,7 +308,6 @@ IBMDSwitcherMultiView::GetBorderColor	5 not on mini	recorded: not obtainable on 
 IBMDSwitcherMultiView::SetBorderColor	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMultiView::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherMultiView::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherMultiViewIterator::Next	5 not on mini	recorded: lists no MultiView
 IBMDSwitcherRecordAV::StartRecording	5 not on mini	recorded: no recording on the base model
 IBMDSwitcherRecordAV::StopRecording	5 not on mini	recorded: no recording on the base model
 IBMDSwitcherRecordAV::SwitchDisk	5 not on mini	recorded: no recording on the base model
@@ -396,7 +391,6 @@ IBMDSwitcherSerialPort::SetBaudRate	5 not on mini	recorded: not obtainable on th
 IBMDSwitcherSerialPort::GetBaudRate	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherSerialPort::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherSerialPort::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherSerialPortIterator::Next	5 not on mini	recorded: lists no SerialPort
 IBMDSwitcherStreamRTMP::StartStreaming	5 not on mini	recorded: no streaming on the base model
 IBMDSwitcherStreamRTMP::StopStreaming	5 not on mini	recorded: no streaming on the base model
 IBMDSwitcherStreamRTMP::IsStreaming	5 not on mini	recorded: no streaming on the base model
@@ -499,7 +493,6 @@ IBMDSwitcherTalkback::SetMicrophoneMuted	5 not on mini	recorded: not obtainable 
 IBMDSwitcherTalkback::CanMuteMicrophone	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherTalkback::AddCallback	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherTalkback::RemoveCallback	5 not on mini	recorded: not obtainable on this model
-IBMDSwitcherTalkbackIterator::Next	5 not on mini	recorded: lists no Talkback
 IBMDSwitcherTalkbackIterator::GetById	5 not on mini	recorded: lists no Talkback
 IBMDSwitcherTransitionStingerParameters::GetSource	5 not on mini	recorded: not obtainable on this model
 IBMDSwitcherTransitionStingerParameters::SetSource	5 not on mini	recorded: not obtainable on this model

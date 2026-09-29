@@ -6,7 +6,8 @@ Contributions are welcome. Please read this before opening a pull request.
 
 - Bug fixes with a clear reproduction case
 - Protocol accuracy improvements (backed by a real-device recording)
-- New ATEM commands handled in `core/src/device.cpp`
+- New ATEM commands in the core: a setter-table entry
+  (`core/tools/setters_spec.py`) or a handler in `core/src/device.cpp`
 - Virtual camera compatibility improvements
 
 ## What we don't want (right now)
@@ -36,7 +37,8 @@ Contributions are welcome. Please read this before opening a pull request.
 
 If your contribution changes emulator behavior, include the evidence from the
 real switcher: the atem-sweep test and the recorded packets (`wire.jsonl`)
-that show it. See [docs/sweep.md](docs/sweep.md) for recording.
+that show it. Never change a golden record to make a test pass. See
+[sweep/README.md](sweep/README.md) for recording and the workflow.
 
 ## License
 
