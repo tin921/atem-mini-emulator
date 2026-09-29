@@ -1,9 +1,12 @@
 #include "device.h"
 
+#include <QCryptographicHash>
 #include <QFile>
 #include <QJsonObject>
 #include <QTextStream>
 #include <algorithm>
+#include <optional>
+#include <tuple>
 
 namespace emu {
 
@@ -17,27 +20,117 @@ constexpr quint8 kKeyTypeLuma = 0;
 constexpr quint8 kKeyTypeDVE = 3;
 constexpr quint8 kStyleDVE = 3;
 
-// CKDV bit -> (command offset, KeDV offset, size)
-struct Span { int bit, cmd, field, size; };
-constexpr Span kDveSpans[] = {
-    { 0, 8, 4, 4 },   { 1, 12, 8, 4 },  { 2, 16, 12, 4 }, { 3, 20, 16, 4 },  // size x/y, position x/y
-    { 4, 24, 20, 4 },                                                       // rotation
-    { 5, 28, 24, 1 }, { 6, 29, 25, 1 }, { 7, 30, 26, 1 },                   // border, shadow, bevel
-    { 8, 32, 28, 2 }, { 9, 34, 30, 2 },                                     // border width out/in
-    { 10, 36, 32, 1 }, { 11, 37, 33, 1 }, { 12, 38, 34, 1 }, { 13, 39, 35, 1 },  // softness, bevel
-    { 14, 40, 36, 1 },                                                      // border opacity
-    { 15, 42, 38, 2 }, { 16, 44, 40, 2 }, { 17, 46, 42, 2 },                // border hue/sat/luma
-    { 18, 48, 44, 2 }, { 19, 50, 46, 1 },                                   // light direction/altitude
-    { 20, 51, 47, 1 }, { 21, 52, 48, 2 }, { 22, 54, 50, 2 }, { 23, 56, 52, 2 }, { 24, 58, 54, 2 },  // mask
-    { 25, 60, 56, 1 },                                                      // fly rate
-};
+// File transfers
+constexpr quint16 kStillStore = 0x0000;
+constexpr quint16 kMacroStore = 0xffff;
+constexpr int kChunkSize = 1396;     // data bytes per FTDa, as the ATEM Mini sends them
+constexpr int kWindow = 10;          // chunks sent ahead of the client's acknowledgements
 
-// CTWp bit -> (command offset, TWpP offset, size)
-constexpr Span kWipeSpans[] = {
-    { 0, 3, 1, 1 },   { 1, 4, 2, 1 },   { 2, 6, 4, 2 },   { 3, 8, 6, 2 },    // rate, pattern, width, fill
-    { 4, 10, 8, 2 },  { 5, 12, 10, 2 }, { 6, 14, 12, 2 }, { 7, 16, 14, 2 },  // symmetry, softness, x, y
-    { 8, 18, 16, 1 }, { 9, 19, 17, 1 },                                     // reverse, flip-flop
+} // namespace
+
+// ── Setter table ─────────────────────────────────────────────
+// Most "set value" commands are [mask][key][values] and change one field the
+// same way; setters_table.inc (generated from core/tools/setters_spec.py,
+// checked against the golden record) describes them and applySetter() runs
+// them.
+namespace setters {
+
+enum class Rule : quint8 { None, Clamp, Mod, Allow, Ignore, UnitWrap, NegDec, AllowBits, EqFreq, RefuseIf };
+enum class Post : quint8 { None, KeyframeStored, ChromaCursor, TransitionRate };
+struct Effect { qint64 value; int field, size; qint64 set; };   // storing value also stores set
+struct Prop {
+    int bit;                       // mask bit; -1: the command has no mask
+    int cmd, field, size;          // offsets in the command and the field
+    bool isSigned;
+    Rule rule;
+    qint64 a, b;                   // rule arguments (see setters_spec.py)
+    const qint64* set; int setCount;
+    bool echoSame;                 // answered when the value doesn't change
+    const char* alsoField; int alsoOffset;   // a second field that holds the same value
+    const Effect* effects; int effectCount;
 };
+struct KeyByte { int cmd, field; };
+struct Setter {
+    const char* command;
+    const char* field;
+    int maskSize;
+    const KeyByte* key; int keyCount;
+    bool echoSame;
+    Post post;
+    const Prop* props; int propCount;
+};
+struct EqRange { qint64 range, lo, hi; };
+
+#include "setters_table.inc"
+
+qint64 readValue(const QByteArray& d, int at, int size, bool isSigned) {
+    quint64 v = 0;
+    for (int i = 0; i < size; ++i) v = v << 8 | u8(d, at + i);
+    if (isSigned && size < 8 && (v >> (size * 8 - 1) & 1)) v |= ~0ull << (size * 8);
+    return static_cast<qint64>(v);
+}
+
+void writeValue(QByteArray& d, int at, int size, qint64 v) {
+    for (int i = size - 1; i >= 0; --i, v >>= 8) setU8(d, at + i, static_cast<quint8>(v));
+}
+
+bool inSet(const Prop& p, qint64 v) { return std::find(p.set, p.set + p.setCount, v) != p.set + p.setCount; }
+
+// The value the switcher stores, or nothing if it refuses it.
+std::optional<qint64> applyRule(const Prop& p, qint64 sent, const QByteArray& field) {
+    switch (p.rule) {
+    case Rule::None: return sent;
+    case Rule::Clamp: return std::clamp(sent, p.a, p.b);
+    case Rule::Mod: return (sent % p.a + p.a) % p.a;
+    case Rule::Allow: if (inSet(p, sent)) return sent; return std::nullopt;
+    case Rule::Ignore: return std::nullopt;
+    case Rule::UnitWrap: {                  // whole part kept in 16 bits
+        qint64 whole = sent / 1000;
+        qint64 v = ((whole + 32768) % 65536 + 65536) % 65536 - 32768;
+        v = v * 1000 + (sent - whole * 1000);
+        return p.b ? std::max(p.a, v) : v;
+    }
+    case Rule::NegDec: return sent < 0 && sent % 1000 == 0 ? sent - 1 : sent;
+    case Rule::AllowBits:
+        if (sent > 0 && (sent & (sent - 1)) == 0 && (sent & u8(field, static_cast<int>(p.a)))) return sent;
+        return std::nullopt;
+    case Rule::EqFreq:
+        for (const EqRange& r : kEqRanges)
+            if (r.range == u8(field, static_cast<int>(p.a))) return std::clamp(sent, r.lo, r.hi);
+        return sent;
+    case Rule::RefuseIf:
+        if (inSet(p, u8(field, static_cast<int>(p.a)))) return std::nullopt;
+        return sent;
+    }
+    return sent;
+}
+
+// The advanced chroma sample cursor stays inside the frame (X +-16000,
+// Y +-9000 = 960 x 540 pixels from the centre). Clamped positions are whole
+// pixels; a size change re-reads the position in whole pixels too.
+void keepCursorInFrame(QByteArray& f, bool sizeSet) {
+    const int size = i16(f, 8);
+    // Half the cursor in pixels, measured at these sizes; straight lines between.
+    static constexpr int pts[][2] = { { 620, 37 }, { 2500, 140 }, { 5000, 275 }, { 9925, 540 } };
+    int half = 540;
+    for (int i = 0; i + 1 < 4; ++i) {
+        if (size <= pts[i + 1][0]) {
+            half = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * (std::max(size, pts[i][0]) - pts[i][0])
+                                   / (pts[i + 1][0] - pts[i][0]);
+            break;
+        }
+    }
+    for (auto [at, pixels] : { std::pair{ 4, 960 }, std::pair{ 6, 540 } }) {
+        int v = i16(f, at);
+        if (sizeSet) v = static_cast<int>(static_cast<int>(v * 3 / 50.0) * 50 / 3.0);
+        const int limit = static_cast<int>((pixels - half) * 50 / 3.0);
+        setU16(f, at, static_cast<quint16>(std::clamp(v, -limit, limit)));
+    }
+}
+
+} // namespace setters
+
+namespace {
 
 double framesPerSecond(quint8 videoMode) {
     switch (videoMode) {
@@ -99,6 +192,17 @@ bool Device::load(const QString& profileDir, QString* error) {
             int index = parts[0].toInt();
             if (index < 0 || index >= m_pool.size()) continue;
             m_pool[index].ops.append({ MacroOp::Patch, parts[1].toLatin1(), QByteArray::fromHex(parts[2].toLatin1()), 0 });
+        }
+    }
+    // The stored macros' bytes (as a download gives them), from a backup of the real switcher.
+    QFile bytes(profileDir + "/macro-bytes.txt");
+    if (bytes.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&bytes);
+        while (!in.atEnd()) {
+            QStringList parts = in.readLine().trimmed().split(' ', Qt::SkipEmptyParts);
+            if (parts.size() != 2 || parts[0].startsWith('#')) continue;
+            int index = parts[0].toInt();
+            if (index >= 0 && index < m_pool.size()) m_pool[index].bytes = QByteArray::fromHex(parts[1].toLatin1());
         }
     }
     int used = 0;
@@ -166,6 +270,81 @@ void Device::send(const char* name, const QByteArray* data) {
 
 void Device::sendIfChanged(const char* name, QByteArray* data, const QByteArray& before) {
     if (data && *data != before) send(name, data);
+}
+
+void Device::reply(const char* name, const QByteArray& data) {
+    m_out.append({ QByteArray(name), data, true });
+}
+
+// Applies a command from the setter table: each value whose mask bit is set
+// goes through its rule. A command whose values are all refused changes
+// nothing and gets no answer; one that changes nothing is answered only if
+// its values are echoed when unchanged (not for sources and audio).
+void Device::applySetter(const setters::Setter& s, const QByteArray& d) {
+    using namespace setters;
+    const quint32 mask = s.maskSize ? static_cast<quint32>(readValue(d, 0, s.maskSize, false)) : ~0u;
+    QByteArray* target = nullptr;
+    for (QByteArray* f : m_store.all(s.field)) {
+        bool match = true;
+        for (int i = 0; i < s.keyCount && match; ++i) match = u8(*f, s.key[i].field) == u8(d, s.key[i].cmd);
+        if (match) { target = f; break; }
+    }
+    if (!target) return;
+
+    QByteArray next = *target;
+    int count = 0, refused = 0;
+    bool echo = false;
+    QList<const Prop*> mirrored;
+    for (int i = 0; i < s.propCount; ++i) {
+        const Prop& p = s.props[i];
+        if (p.bit >= 0 && !(mask & (1u << p.bit))) continue;
+        ++count;
+        std::optional<qint64> value = applyRule(p, readValue(d, p.cmd, p.size, p.isSigned), next);
+        if (!value) { ++refused; continue; }
+        writeValue(next, p.field, p.size, *value);
+        for (int e = 0; e < p.effectCount; ++e)
+            if (p.effects[e].value == *value) writeValue(next, p.effects[e].field, p.effects[e].size, p.effects[e].set);
+        echo = echo || p.echoSame;
+        if (p.alsoField) mirrored.append(&p);
+    }
+    if (count == 0 || refused == count) return;
+    if (s.post == Post::ChromaCursor) keepCursorInFrame(next, mask & 0x10);
+    if (next == *target && !(s.echoSame && echo)) return;
+    *target = next;
+
+    if (s.post == Post::KeyframeStored) {        // setting a keyframe value stores the keyframe
+        const int frame = u8(d, 6);
+        QByteArray* stored = m_store.find("KeFS", key(u8(d, 4), u8(d, 5)));
+        if (stored && (frame == 1 || frame == 2)) {
+            setU8(*stored, 1 + frame, 1);
+            send("KeFS", stored);
+        }
+    }
+    send(s.field, target);
+    // The rate of the next transition's style is also TrPs's frames remaining.
+    const bool rateSet = s.propCount && (s.props[0].bit < 0 || (mask & (1u << s.props[0].bit)));
+    if (s.post == Post::TransitionRate && rateSet) {
+        const QByteArray* style = m_store.find("TrSS", key(u8(*target, 0)));
+        static const char* kParams[] = { "TMxP", "TDpP", "TWpP", "TDvP" };
+        const int current = style ? u8(*style, 1) : 0;
+        QByteArray* position = m_store.find("TrPs", key(u8(*target, 0)));
+        if (position && !u8(*position, 1) && current < 4 && qstrcmp(kParams[current], s.field) == 0) {
+            setU8(*position, 2, u8(*target, 1));
+            send("TrPs", position);
+        }
+    }
+    // Values shared with another field (the DVE transition's key settings are
+    // the stinger's too). Its key is the leading key bytes of this field.
+    QByteArray prefix;
+    for (int i = 0; i < s.keyCount && s.key[i].field == i; ++i) prefix.append(static_cast<char>(u8(d, s.key[i].cmd)));
+    QList<QByteArray> others;
+    for (const Prop* p : mirrored) {
+        QByteArray* other = m_store.find(p->alsoField, prefix);
+        if (!other) continue;
+        for (int i = 0; i < p->size; ++i) setU8(*other, p->alsoOffset + i, u8(next, p->field + i));
+        if (!others.contains(p->alsoField)) others.append(p->alsoField);
+    }
+    for (const QByteArray& name : others) send(name.constData(), m_store.find(name.constData(), prefix));
 }
 
 // ── Inputs ───────────────────────────────────────────────────
@@ -396,6 +575,55 @@ QList<MacroOp> Macro::opsFromJson(const QJsonArray& json) {
     return ops;
 }
 
+namespace {
+// Macro op ids, as recorded from the ATEM Mini (little-endian, see Macro::encode).
+constexpr quint16 kOpPreviewInput = 0x0003;   // me, _, input
+constexpr quint16 kOpUserWait = 0x0006;
+constexpr quint16 kOpWait = 0x0007;           // frames (32 bits)
+
+void putLE16(QByteArray& b, quint16 v) { b.append(static_cast<char>(v & 0xff)).append(static_cast<char>(v >> 8)); }
+quint16 le16(const QByteArray& b, int at) { return static_cast<quint16>(u8(b, at) | u8(b, at + 1) << 8); }
+} // namespace
+
+QByteArray Macro::encode(const QList<MacroOp>& ops) {
+    QByteArray out;
+    for (const MacroOp& op : ops) {
+        if (op.kind == MacroOp::Wait) {
+            putLE16(out, 8); putLE16(out, kOpWait);
+            putLE16(out, static_cast<quint16>(op.frames)); putLE16(out, static_cast<quint16>(op.frames >> 16));
+        } else if (op.kind == MacroOp::UserWait) {
+            putLE16(out, 4); putLE16(out, kOpUserWait);
+        } else if (op.kind == MacroOp::Command && op.name == "CPvI") {
+            putLE16(out, 8); putLE16(out, kOpPreviewInput);
+            out.append(static_cast<char>(u8(op.data, 0))).append('\0');
+            putLE16(out, u16(op.data, 2));
+        }
+    }
+    return out;
+}
+
+bool Macro::decode(const QByteArray& bytes, QList<MacroOp>* ops) {
+    QList<MacroOp> out;
+    for (int at = 0; at < bytes.size();) {
+        const int length = le16(bytes, at);
+        if (length < 4 || at + length > bytes.size()) return false;
+        const quint16 op = le16(bytes, at + 2);
+        if (op == kOpWait && length >= 8) {
+            out.append({ MacroOp::Wait, {}, {}, le16(bytes, at + 4) | le16(bytes, at + 6) << 16 });
+        } else if (op == kOpUserWait) {
+            out.append({ MacroOp::UserWait, {}, {}, 0 });
+        } else if (op == kOpPreviewInput && length >= 8) {
+            QByteArray d(4, '\0');
+            setU8(d, 0, u8(bytes, at + 4));
+            setU16(d, 2, le16(bytes, at + 6));
+            out.append({ MacroOp::Command, "CPvI", d, 0 });
+        }
+        at += length;
+    }
+    if (ops) *ops = out;
+    return true;
+}
+
 // Slot count from _MAC, names and descriptions from the MPrp fields.
 void Device::loadMacroPool() {
     const QByteArray* count = m_store.find("_MAC");
@@ -598,6 +826,10 @@ bool Device::colorGenerator(int index, double* hue, double* saturation, double* 
 void Device::registerHandlers() {
     auto& h = m_handlers;
 
+    // Setter table (setters_table.inc) ----------------------------------
+    for (const setters::Setter& s : setters::kSetters)
+        h[s.command] = [this, &s](const QByteArray& d) { applySetter(s, d); };
+
     // Inputs ------------------------------------------------------------
     h["CInL"] = [this](const QByteArray& d) {       // set input names
         quint8 mask = u8(d, 0);
@@ -695,6 +927,15 @@ void Device::registerHandlers() {
         const QByteArray* position = m_store.find("TrPs", key(u8(d, 1)));
         if (!style) return;
         bool inTransition = position && u8(*position, 1);
+        if ((mask & 0x01) && u8(d, 2) == kStyleDVE && m_dveOwner == DveOwner::Keyer) {
+            // A DVE key on air keeps the DVE: the style is refused (recorded: three warnings).
+            const QByteArray* props = m_store.find("KeBP", key(0, 0));
+            const QByteArray* onAir = m_store.find("KeOn", key(0, 0));
+            if (props && u8(*props, 2) == kKeyTypeDVE && onAir && u8(*onAir, 2)) {
+                for (int i = 0; i < 3; ++i) warn("DVE unavailable");
+                return;
+            }
+        }
         if ((mask & 0x01) && u8(d, 2) <= 4) {
             setU8(*style, 3, u8(d, 2));
             if (!inTransition) setU8(*style, 1, u8(d, 2));
@@ -713,20 +954,6 @@ void Device::registerHandlers() {
         send("TrSS", style);
         setDveTaken(dveTakenByTransition());
     };
-    h["CTWp"] = [this](const QByteArray& d) {       // wipe parameters
-        quint16 mask = u16(d, 0);
-        QByteArray* wipe = m_store.find("TWpP", key(u8(d, 2)));
-        if (!wipe) return;
-        for (const Span& s : kWipeSpans)
-            if (mask & (1u << s.bit)) {
-                QByteArray value = d.mid(s.cmd, s.size);
-                value.resize(s.size, '\0');
-                wipe->replace(s.field, s.size, value);
-            }
-        if (u8(*wipe, 1) == 0) setU8(*wipe, 1, 1);  // rate 0 is stored as 1
-        send("TWpP", wipe);
-    };
-
     // Fade to black ------------------------------------------------------
     h["FtbA"] = [this](const QByteArray&) {
         QByteArray* state = m_store.find("FtbS", key(0));
@@ -820,24 +1047,6 @@ void Device::registerHandlers() {
         if (mask & 0x10) setU16(*props, 18, u16(d, 10));
         send("KeBP", props);
     };
-    h["CKDV"] = [this](const QByteArray& d) {       // DVE: fly position/size, crop, border, ...
-        quint32 mask = u32(d, 0);
-        QByteArray* dve = m_store.find("KeDV", key(u8(d, 4), u8(d, 5)));
-        if (!dve) return;
-        for (const Span& s : kDveSpans) {
-            if (!(mask & (1u << s.bit))) continue;
-            QByteArray value = d.mid(s.cmd, s.size);
-            value.resize(s.size, '\0');
-            if (s.bit <= 1 && i32(value, 0) < 0) value.fill('\0');   // negative size -> 0
-            if (s.bit == 15 || s.bit == 18) {                        // hue, light direction wrap at 360.0
-                QByteArray wrapped(2, '\0');
-                setU16(wrapped, 0, static_cast<quint16>(u16(value, 0) % 3600));
-                value = wrapped;
-            }
-            dve->replace(s.field, s.size, value);
-        }
-        send("KeDV", dve);
-    };
     h["RFlK"] = [this](const QByteArray& d) {       // run flying key to A / B / full
         QByteArray* dve = m_store.find("KeDV", key(u8(d, 1), u8(d, 2)));
         if (!dve) return;
@@ -855,6 +1064,49 @@ void Device::registerHandlers() {
             return;
         }
         send("KeDV", dve);
+    };
+
+    h["SFKF"] = [this](const QByteArray& d) {       // store the fly key as keyframe A / B / both
+        QByteArray* stored = m_store.find("KeFS", key(u8(d, 0), u8(d, 1)));
+        const QByteArray* dve = m_store.find("KeDV", key(u8(d, 0), u8(d, 1)));
+        const int which = u8(d, 2);
+        if (!stored || !dve || which < 1 || which > 3) return;
+        for (int frame = 1; frame <= 2; ++frame)
+            if (which & frame) setU8(*stored, 1 + frame, 1);
+        send("KeFS", stored);
+        for (int frame = 1; frame <= 2; ++frame) {
+            QByteArray* keyFrame = m_store.find("KKFP", key({ u8(d, 0), u8(d, 1), frame }));
+            if (!(which & frame) || !keyFrame) continue;
+            // KeDV -> KKFP: size/position/rotation, border widths..opacity,
+            // border colour and light, mask edges (KKFP has no on/off flags).
+            for (auto [from, to, size] : { std::tuple{ 4, 4, 20 }, std::tuple{ 28, 24, 9 },
+                                           std::tuple{ 38, 34, 9 }, std::tuple{ 48, 44, 8 } })
+                for (int i = 0; i < size; ++i) setU8(*keyFrame, to + i, u8(*dve, from + i));
+            send("KKFP", keyFrame);
+        }
+    };
+    h["RFKF"] = [this](const QByteArray& d) {       // clear keyframe A / B / both (values stay)
+        QByteArray* stored = m_store.find("KeFS", key(u8(d, 0), u8(d, 1)));
+        const int which = u8(d, 2);
+        if (!stored || which < 1 || which > 3) return;
+        for (int frame = 1; frame <= 2; ++frame)
+            if (which & frame) setU8(*stored, 1 + frame, 0);
+        send("KeFS", stored);
+        for (int frame = 1; frame <= 2; ++frame)
+            if (which & frame) send("KKFP", m_store.find("KKFP", key({ u8(d, 0), u8(d, 1), frame })));
+    };
+    h["RACK"] = [this](const QByteArray& d) {       // reset advanced chroma key settings
+        QByteArray* chroma = m_store.find("KACk", key(u8(d, 0), u8(d, 1)));
+        if (!chroma) return;
+        const QByteArray before = *chroma;
+        const quint8 mask = u8(d, 3);
+        if (mask & 0x01) { setU16(*chroma, 2, 0); setU16(*chroma, 4, 0); setU16(*chroma, 6, 500); }   // key adjustments
+        if (mask & 0x02) { setU16(*chroma, 8, 0); setU16(*chroma, 10, 0); }                        // chroma correction
+        if (mask & 0x04) {                                                                          // colour adjustments
+            for (int at : { 12, 14, 18, 20, 22 }) setU16(*chroma, at, 0);
+            setU16(*chroma, 16, 1000);
+        }
+        sendIfChanged("KACk", chroma, before);
     };
 
     // Downstream key -------------------------------------------------------
@@ -974,6 +1226,7 @@ void Device::registerHandlers() {
                 int slot = m_recording.index;
                 m_pool[slot] = m_recording.macro;
                 m_pool[slot].used = true;
+                m_pool[slot].bytes = Macro::encode(m_pool[slot].ops);
                 m_recording = {};
                 publishMacro(slot);
                 setRecordingStatus(false, slot);
@@ -1037,7 +1290,7 @@ void Device::registerHandlers() {
         if (locked) {
             QByteArray obtained(4, '\0');
             setU16(obtained, 0, store);
-            m_out.append({ "LKOB", obtained });
+            reply("LKOB", obtained);
         }
         setU8(*lock, 2, locked ? 1 : 0);
         send("LKST", lock);
@@ -1055,6 +1308,299 @@ void Device::registerHandlers() {
     // Accepted without a reply, as the real switcher does for these.
     h["SCPS"] = [](const QByteArray&) {};           // media player play state (stills: nothing to do)
     h["CCmd"] = [](const QByteArray&) {};           // camera control (no camera attached)
+
+    // Fade to black: cut straight to / from black -------------------------
+    h["FCut"] = [this](const QByteArray& d) {
+        QByteArray* state = m_store.find("FtbS", key(u8(d, 0)));
+        if (!state || m_animations.contains("ftb")) return;
+        const QByteArray before = *state;
+        setU8(*state, 1, u8(d, 1) ? 1 : 0);
+        setU8(*state, 2, 0);
+        sendIfChanged("FtbS", state, before);
+    };
+
+    // Fairlight audio resets ----------------------------------------------
+    // Defaults as the ATEM Mini's resets recorded them.
+    h["RICD"] = [this](const QByteArray& d) {       // reset dynamics: 1 makeup, 2 expander, 4 compressor, 8 limiter
+        const quint8 mask = u8(d, 17);
+        auto reset = [&](const char* name, std::initializer_list<std::tuple<int, int, qint32>> values) {
+            QByteArray* f = findAudioSource(name, d, 0);
+            if (!f) return;
+            const QByteArray before = *f;
+            for (auto [at, size, v] : values) size == 4 ? setU32(*f, at, static_cast<quint32>(v)) : setU16(*f, at, static_cast<quint16>(v));
+            sendIfChanged(name, f, before);
+        };
+        if (mask & 0x01) reset("FASP", { { 36, 4, 0 } });
+        if (mask & 0x02) reset("AIXP", { { 20, 4, -4500 }, { 24, 2, 1800 }, { 26, 2, 110 }, { 28, 4, 140 }, { 32, 4, 0 }, { 36, 4, 9300 } });
+        if (mask & 0x04) reset("AICP", { { 20, 4, -3500 }, { 24, 2, 200 }, { 28, 4, 140 }, { 32, 4, 0 }, { 36, 4, 9300 } });
+        if (mask & 0x08) reset("AILP", { { 20, 4, -1200 }, { 24, 4, 71 }, { 28, 4, 0 }, { 32, 4, 9300 } });
+    };
+    h["RICE"] = [this](const QByteArray& d) {       // reset the EQ (1) or one band (2, band at 17)
+        // band: enabled, shape, range, frequency, Q (gain resets to 0)
+        static constexpr int bands[][5] = { { 0, 16, 1, 46, 71 },   { 1, 1, 1, 49, 80 },  { 1, 4, 2, 171, 230 },
+                                            { 1, 4, 4, 798, 230 }, { 1, 32, 8, 7260, 80 }, { 0, 2, 8, 12900, 71 } };
+        const quint8 mask = u8(d, 0);
+        for (int band = 0; band < 6; ++band) {
+            if (!(mask & 0x01) && !((mask & 0x02) && u8(d, 17) == band)) continue;
+            QByteArray* f = findAudioSource("AEBP", d, 2, band);
+            if (!f) continue;
+            const QByteArray before = *f;
+            setU8(*f, 17, static_cast<quint8>(bands[band][0]));
+            setU8(*f, 19, static_cast<quint8>(bands[band][1]));
+            setU8(*f, 21, static_cast<quint8>(bands[band][2]));
+            setU32(*f, 24, static_cast<quint32>(bands[band][3]));
+            setU32(*f, 28, 0);
+            setU16(*f, 32, static_cast<quint16>(bands[band][4]));
+            sendIfChanged("AEBP", f, before);
+        }
+    };
+    // File transfers --------------------------------------------------------
+    // Download: FTSU -> FTDa chunks, each acknowledged with FTUA -> FTDC.
+    // Upload: FTSD -> FTCD; FTDa chunks and FTFD (name, description, hash) ->
+    // the new MPrp / MPfe, FTDC. Errors: FTDE. Answers go to the asking client.
+    h["FTSU"] = [this](const QByteArray& d) {
+        const quint16 id = u16(d, 0);
+        Transfer t;
+        t.store = u16(d, 2);
+        t.index = static_cast<int>(u32(d, 4));
+        if (t.store == kMacroStore && t.index < m_pool.size() && m_pool[t.index].used) {
+            const Macro& m = m_pool[t.index];
+            t.data = m.bytes.isEmpty() ? Macro::encode(m.ops) : m.bytes;
+        } else if (t.store == kStillStore && stillValid(t.index)) {
+            t.data = stillBytes(t.index);
+        } else {
+            QByteArray error(4, '\0');
+            setU16(error, 0, id);
+            setU8(error, 2, 2);                        // not found
+            reply("FTDE", error);
+            return;
+        }
+        m_transfers[id] = t;
+        sendChunks(id);
+    };
+    h["FTUA"] = [this](const QByteArray& d) {       // chunk received
+        const quint16 id = u16(d, 0);
+        auto it = m_transfers.find(id);
+        if (it == m_transfers.end() || it->upload) return;
+        ++it->acked;
+        if (it->acked >= it->sent && it->sent * kChunkSize >= it->data.size()) {
+            QByteArray done(4, '\0');
+            setU16(done, 0, id);
+            setU8(done, 2, 1);
+            reply("FTDC", done);
+            m_transfers.erase(it);
+            return;
+        }
+        sendChunks(id);
+    };
+    h["FTAD"] = [this](const QByteArray& d) { m_transfers.remove(u16(d, 0)); };   // abort
+    h["FTSD"] = [this](const QByteArray& d) {
+        const quint16 id = u16(d, 0);
+        Transfer t;
+        t.upload = true;
+        t.store = u16(d, 2);
+        t.index = static_cast<int>(u32(d, 4));
+        t.size = u32(d, 8);
+        const QByteArray* pool = m_store.find("_mpl");
+        const bool ok = t.store == kMacroStore ? t.index < m_pool.size()
+                      : t.store == kStillStore && pool && t.index < u8(*pool, 0);
+        if (!ok) {
+            QByteArray error(4, '\0');
+            setU16(error, 0, id);
+            setU8(error, 2, 2);
+            reply("FTDE", error);
+            return;
+        }
+        m_transfers[id] = t;
+        QByteArray go(12, '\0');                     // id, 2, _, chunk size, chunk count (as recorded)
+        setU16(go, 0, id);
+        setU16(go, 2, 2);
+        setU16(go, 6, 0x0574);
+        setU16(go, 8, 800);
+        reply("FTCD", go);
+    };
+    h["FTDa"] = [this](const QByteArray& d) {       // upload data
+        const quint16 id = u16(d, 0);
+        auto it = m_transfers.find(id);
+        if (it == m_transfers.end() || !it->upload) return;
+        it->data += d.mid(4, u16(d, 2));
+        finishUpload(id);
+    };
+    h["FTFD"] = [this](const QByteArray& d) {       // upload: name, description, hash
+        const quint16 id = u16(d, 0);
+        auto it = m_transfers.find(id);
+        if (it == m_transfers.end() || !it->upload) return;
+        auto text = [&](int at, int size) { QByteArray b = d.mid(at, size); return b.left(b.indexOf('\0') < 0 ? size : b.indexOf('\0')); };
+        it->name = text(2, 64);
+        it->description = text(66, 128);
+        it->hash = d.mid(194, 16);
+        it->described = true;
+        finishUpload(id);
+    };
+
+    // Media pool stills: rename, clear, clear all, capture the program.
+    h["SMPS"] = [this](const QByteArray& d) {
+        const int index = u8(d, 0);
+        QByteArray* f = stillField(index);
+        if (!f) return;
+        QByteArray name = d.mid(1, 63);
+        if (name.indexOf('\0') >= 0) name.truncate(name.indexOf('\0'));
+        publishStill(index, u8(*f, 4), f->mid(5, 16), name);
+    };
+    h["CSTL"] = [this](const QByteArray& d) {
+        if (stillField(u8(d, 0))) publishStill(u8(d, 0), false, {}, {});
+    };
+    h["CLMP"] = [this](const QByteArray&) {
+        const QByteArray* pool = m_store.find("_mpl");
+        for (int i = 0; pool && i < u8(*pool, 0); ++i) publishStill(i, false, {}, {});
+    };
+    h["Capt"] = [this](const QByteArray&) {
+        const QByteArray* pool = m_store.find("_mpl");
+        for (int i = 0; pool && i < u8(*pool, 0); ++i) {
+            if (stillValid(i)) continue;
+            QByteArray name = QString("Capture %1").arg(++m_captures).toUtf8();
+            QByteArray hash = QCryptographicHash::hash(name + QByteArray::number(i), QCryptographicHash::Md5);
+            publishStill(i, true, hash, name);
+            return;
+        }
+    };
+
+    // Accepted, nothing to answer: peak level resets, time code request.
+    for (const char* name : { "RFIP", "RFLP", "TiRq" }) h[name] = [](const QByteArray&) {};
+    // Refused on the ATEM Mini (recorded: nothing changes, no answer).
+    for (const char* name : { "TlMe", "CFIP" }) h[name] = [](const QByteArray&) {};
+}
+
+// ── File transfers ──────────────────────────────────────────
+
+// Sends download chunks while fewer than kWindow are unacknowledged.
+void Device::sendChunks(quint16 id) {
+    Transfer& t = m_transfers[id];
+    const int chunks = std::max(1, static_cast<int>((t.data.size() + kChunkSize - 1) / kChunkSize));
+    while (t.sent < chunks && t.sent - t.acked < kWindow) {
+        const QByteArray part = t.data.mid(t.sent * kChunkSize, kChunkSize);
+        QByteArray chunk(4, '\0');
+        setU16(chunk, 0, id);
+        setU16(chunk, 2, static_cast<quint16>(part.size()));
+        reply("FTDa", chunk + part);
+        ++t.sent;
+    }
+}
+
+namespace {
+// Size of a still once its run-length encoding is undone: 8-byte words;
+// FE FE FE FE FE FE FE FE, count, word repeats word count times.
+qint64 unpackedSize(const QByteArray& rle) {
+    static const QByteArray kRun(8, '\xfe');
+    qint64 size = 0;
+    for (int at = 0; at + 8 <= rle.size();) {
+        if (rle.mid(at, 8) == kRun && at + 24 <= rle.size()) {
+            size += 8 * static_cast<qint64>(static_cast<quint64>(u32(rle, at + 8)) << 32 | u32(rle, at + 12));
+            at += 24;
+        } else {
+            size += 8;
+            at += 8;
+        }
+    }
+    return size;
+}
+} // namespace
+
+// An upload is complete once it is described (FTFD) and all its data is in.
+void Device::finishUpload(quint16 id) {
+    auto it = m_transfers.find(id);
+    if (it == m_transfers.end() || !it->described) return;
+    const Transfer& t = *it;
+    const qint64 have = t.store == kStillStore ? unpackedSize(t.data) : t.data.size();
+    if (have < t.size) return;
+
+    if (t.store == kMacroStore) {
+        QList<MacroOp> ops;
+        // Bytes that aren't a macro leave the slot as it was (recorded: still "done").
+        if (Macro::decode(t.data.left(static_cast<int>(t.size)), &ops)) {
+            Macro& m = m_pool[t.index];
+            m = Macro();
+            m.used = true;
+            m.name = QString::fromUtf8(t.name);
+            m.description = QString::fromUtf8(t.description);
+            m.ops = ops;
+            m.bytes = t.data.left(static_cast<int>(t.size));
+            publishMacroSteps(t.index);
+        }
+    } else {
+        m_stillData[t.index] = t.data;
+        publishStill(t.index, true, t.hash, t.name);
+    }
+    QByteArray done(4, '\0');
+    setU16(done, 0, id);
+    reply("FTDC", done);
+    m_transfers.erase(it);
+}
+
+// A new macro's properties arrive in three steps on the real switcher: used,
+// then the name, then name and description.
+void Device::publishMacroSteps(int index) {
+    Macro m = m_pool[index];
+    const QString name = m.name, description = m.description;
+    m_pool[index].name.clear();
+    m_pool[index].description.clear();
+    publishMacro(index);
+    m_pool[index].name = name;
+    publishMacro(index);
+    m_pool[index].description = description;
+    publishMacro(index);
+}
+
+// MPfe: type (0 still), _, index, valid, MD5 hash, _, name length, name.
+QByteArray* Device::stillField(int index) {
+    for (QByteArray* f : m_store.all("MPfe"))
+        if (u8(*f, 0) == 0 && u16(*f, 2) == index) return f;
+    return nullptr;
+}
+
+bool Device::stillValid(int index) const {
+    const QByteArray* f = const_cast<Device*>(this)->stillField(index);   // FieldStore::all() isn't const
+    return f && u8(*f, 4);
+}
+
+// The still's data as the switcher sends it: uploaded bytes, or for stills
+// from the profile (their pictures aren't recorded) one flat colour.
+QByteArray Device::stillBytes(int index) const {
+    if (m_stillData.contains(index)) return m_stillData[index];
+    QByteArray rle(8, '\xfe');
+    QByteArray count(8, '\0');
+    setU32(count, 4, 1920 * 1080 * 4 / 8);
+    return rle + count + QByteArray::fromHex("0408004004080040");
+}
+
+void Device::publishStill(int index, bool valid, const QByteArray& hash, const QByteArray& name) {
+    QByteArray* f = stillField(index);
+    if (!f) return;
+    QByteArray still(24, '\0');
+    setU16(still, 2, static_cast<quint16>(index));
+    if (valid) {
+        setU8(still, 4, 1);
+        for (int i = 0; i < 16; ++i) setU8(still, 5 + i, u8(hash, i));
+        setU8(still, 23, static_cast<quint8>(name.size()));
+        still += name;
+        while (still.size() % 4) still.append('\0');
+    } else {
+        m_stillData.remove(index);
+    }
+    *f = still;
+    send("MPfe", f);
+}
+
+// Fairlight fields are keyed by input (2 bytes at 0) and source (8 bytes at
+// 8); an EQ band also by its band number (at 16). inputAt: where the command
+// has the input (0, or 2 after a mask).
+QByteArray* Device::findAudioSource(const char* name, const QByteArray& d, int inputAt, int band) {
+    for (QByteArray* f : m_store.all(name)) {
+        bool match = u16(*f, 0) == u16(d, inputAt) && (band < 0 || u8(*f, 16) == band);
+        for (int i = 8; i < 16 && match; ++i) match = u8(*f, i) == u8(d, i);
+        if (match) return f;
+    }
+    return nullptr;
 }
 
 } // namespace emu

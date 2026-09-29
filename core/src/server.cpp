@@ -237,7 +237,11 @@ void Server::sendAck(Client& client, quint16 id) {
 void Server::broadcast(const FieldList& fields, Client* origin, int originAck) {
     for (Client& c : m_clients) {
         if (!c.connected) continue;
-        sendFields(c, fields, &c == origin ? originAck : -1);
+        FieldList mine;
+        for (const Field& f : fields)
+            if (!f.toSender || &c == origin) mine.append(f);
+        if (!mine.isEmpty()) sendFields(c, mine, &c == origin ? originAck : -1);
+        else if (&c == origin && originAck >= 0) sendAck(c, static_cast<quint16>(originAck));
     }
 }
 

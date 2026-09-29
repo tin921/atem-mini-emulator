@@ -13,6 +13,7 @@ namespace emu {
 struct Field {
     QByteArray name;   // four characters, e.g. "PrgI"
     QByteArray data;   // payload, without the 8-byte field header
+    bool toSender = false;   // an answer for the client that sent the command only
 };
 using FieldList = QList<Field>;
 

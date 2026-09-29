@@ -16,6 +16,8 @@
 
 namespace emu {
 
+namespace setters { struct Setter; }
+
 // One step of a stored macro.
 struct MacroOp {
     enum Kind {
@@ -35,9 +37,17 @@ struct Macro {
     QString name;
     QString description;
     QList<MacroOp> ops;
+    QByteArray bytes;   // the macro as the switcher stores and transfers it (empty: made from ops)
 
     QJsonArray opsToJson() const;
     static QList<MacroOp> opsFromJson(const QJsonArray& json);
+    // The switcher's macro format: little-endian ops [length][op id][values].
+    // Only ops recorded from the real switcher are known (preview input,
+    // pause, user wait); other commands and state patches are left out.
+    static QByteArray encode(const QList<MacroOp>& ops);
+    // False if the bytes are not a well-formed op list. Unknown ops are kept
+    // out of *ops (they do nothing when the macro runs).
+    static bool decode(const QByteArray& bytes, QList<MacroOp>* ops);
 };
 
 // The switcher state in SDK units, for a UI to display.
@@ -133,6 +143,18 @@ private:
     void send(const char* name, const QByteArray* data);
     void sendIfChanged(const char* name, QByteArray* data, const QByteArray& before);
     void emitOutput();   // output produced outside handle(): broadcast it
+    void applySetter(const setters::Setter& setter, const QByteArray& data);
+    QByteArray* findAudioSource(const char* name, const QByteArray& data, int inputAt, int band = -1);
+    void reply(const char* name, const QByteArray& data);   // to the client that sent the command
+
+    // File transfers (macros, stills) and the media pool
+    void sendChunks(quint16 id);
+    void finishUpload(quint16 id);
+    QByteArray* stillField(int index);
+    bool stillValid(int index) const;
+    QByteArray stillBytes(int index) const;
+    void publishStill(int index, bool valid, const QByteArray& hash, const QByteArray& name);
+    void publishMacroSteps(int index);
 
     // Inputs
     const QByteArray* input(quint16 id) const;
@@ -173,6 +195,19 @@ private:
     QHash<quint16, QByteArray> m_defaultNames;   // input id -> InPr as loaded
 
     QVector<Macro> m_pool;
+    struct Transfer {
+        bool upload = false;
+        quint16 store = 0;          // 0 stills, 0xffff macros
+        int index = 0;
+        quint32 size = 0;           // upload: the size once unpacked
+        QByteArray data;
+        int sent = 0, acked = 0;    // download: chunks
+        bool described = false;     // upload: FTFD received
+        QByteArray name, description, hash;
+    };
+    QHash<quint16, Transfer> m_transfers;
+    QHash<int, QByteArray> m_stillData;   // uploaded stills (RLE, as transferred)
+    int m_captures = 0;
     int m_pendingMacro = -1;              // started in the current packet
     struct Run { int index = -1; int step = 0; bool waitingForUser = false; } m_run;
     QTimer m_macroTimer;                  // a macro's Wait step

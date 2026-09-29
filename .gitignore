@@ -44,3 +44,4 @@ ui_*.h
 # Windows
 Thumbs.db
 Desktop.ini
+__pycache__/
