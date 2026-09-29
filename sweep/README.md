@@ -71,7 +71,7 @@ capture, and no verified backup.
    [../core/tools/setters_spec.py](../core/tools/setters_spec.py), proven
    against the recording before any C++ is built; actions, transfers and
    quirks are handlers in `core/src/device.cpp`
-   ([../core/README.md](../core/README.md)).
+   ([../docs/core.md](../docs/core.md)).
 4. **Verify** the emulator against the golden record.
 5. **Close the differences.** A diff says *what* differs (a read-back, a
    callback that did or didn't fire); the per-test `wire` (the commands sent

@@ -191,7 +191,7 @@ test as a square, coloured as it runs.
 - **[sweep/README.md](sweep/README.md)** — the sweep, the proxy, recording
   safely (backups), the golden records, coverage, and the workflow from a
   recording to emulator code.
-- **[core/README.md](core/README.md)** — the emulator core: protocol, state,
+- **[docs/core.md](docs/core.md)** — the emulator core: protocol, state,
   command handlers, the rules the recordings showed, and its limits.
 - **[docs/overview.md](docs/overview.md)** — how the pieces fit, the workflow,
   and how an AI coding agent turns the recordings into emulator code.

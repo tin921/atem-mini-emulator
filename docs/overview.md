@@ -23,7 +23,7 @@ where an AI coding agent does the work — plus the tech stack and build.
 | Piece | What it is | Guide |
 |---|---|---|
 | `src/` → `atem-emulator.exe` | The desktop app: window, program picture, virtual camera | [../README.md](../README.md) |
-| `core/` → `atem-emu.exe` + a library | The switcher: protocol, state, behaviour; the app runs on it | [../core/README.md](../core/README.md) |
+| `core/` → `atem-emu.exe` + a library | The switcher: protocol, state, behaviour; the app runs on it | [core.md](core.md) |
 | `sweep/` → `atem-sweep.exe`, `atem-sweep-gui.exe` | Records the real ATEM through the SDK and a proxy; checks the emulator against the recordings | [../sweep/README.md](../sweep/README.md) |
 
 They share no code: what connects the sweep and the core is data — the
