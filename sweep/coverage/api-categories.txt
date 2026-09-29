@@ -1,0 +1,11 @@
+SDK methods (current interfaces, callbacks excluded): 1264
+emulator verify run: verify-core-20260928-204052
+
+supported      724
+  1 emulator      252   recorded on the real ATEM and emulated (verified)
+  2 samples         1   used by the SDK samples, not yet emulated
+  3 sweep         471   other safe ATEM Mini functions, still to record and emulate
+unsupported    540
+  4 not on mini   525   (400 of them expected, to confirm with a read-only probe)
+  5 destructive    15   deletes, overwrites stored content, records
+total         1264

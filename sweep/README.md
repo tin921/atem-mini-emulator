@@ -6,6 +6,12 @@ responds. Run it against the **real ATEM** to produce a golden record (and a
 capture of every network packet); run it against the **emulator** to check
 the emulator answers the same way.
 
+Its purpose is reverse engineering the ATEM Mini for the emulator. The goal
+is every SDK function the ATEM Mini has and that is safe to call, recorded
+well enough that adding it to the emulator core just works — whether or not
+the emulator supports it yet. Priority: what the emulator and obs-atem use,
+then the SDK samples, then everything else (see [Coverage](#coverage)).
+
 ```text
 [ 19/273] ✓ me.program.1          Program -> Camera 1           280 ms
 [ 28/273] ✓ me.program.bad.5      Program -> 5 (bad)            251 ms
@@ -18,7 +24,9 @@ the emulator answers the same way.
 It **reads everything**, **changes settings and puts them back** (program /
 preview, key, PiP position / size / crop, transitions, input names, …) and
 **runs / stops the stored macros**. It **never deletes, uploads, clears,
-records or streams**.
+records or streams** — no macro recording or deleting, no still capture,
+no saving the startup state, no video mode change. The full list is
+[coverage/excluded.txt](coverage/excluded.txt).
 
 What "puts them back" covers is exactly the settings in the snapshot
 ([src/snapshot.cpp](src/snapshot.cpp)), taken right after connecting. At the
@@ -139,6 +147,33 @@ which command bytes an API call produced and which state fields the ATEM sent
 back — for good input and for bad.
 
 ## Coverage
+
+### The five categories
+
+Every callable SDK method (1,264: the current interfaces, without the
+callback interfaces a client implements) is in exactly one category.
+[coverage/categories.py](coverage/categories.py) sorts them from an emulator
+verify run and writes two lists:
+
+| List | Category | Methods (2026-09-28) | Meaning |
+|---|---|---:|---|
+| [api-supported.tsv](coverage/api-supported.tsv) | 1 emulator | 252 | recorded on the real ATEM, emulated and verified |
+| | 2 samples | 1 | used by the SDK samples, not yet recorded (camera autofocus, opt-in) |
+| | 3 sweep | 471 | every other safe function the ATEM Mini has: still to record, then emulate |
+| [api-unsupported.tsv](coverage/api-unsupported.tsv) | 4 not on mini | 525 | the ATEM Mini doesn't have it ([not-on-mini.txt](coverage/not-on-mini.txt)) |
+| | 5 destructive | 15 | deletes, overwrites stored content, records ([excluded.txt](coverage/excluded.txt)) |
+| | **total** | **1,264** | |
+
+```powershell
+python coverage\categories.py <verify run>\results.json   # also writes coverage\api-categories.txt
+```
+
+"Not on mini" is *recorded* when the real ATEM refused the interface in a
+sweep run, and *expected* (400 of the 525) until a read-only probe on the
+real ATEM confirms it. Work moves methods from 3 (and 2) to 1: add sweep
+tests, record the real ATEM, extend the emulator core until verify passes.
+
+### Call tracking
 
 Every SDK call goes through `SDK_CALL(...)`, which records it as it executes,
 so coverage reflects calls that really ran. The report checks three lists in

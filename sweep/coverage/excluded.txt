@@ -1,6 +1,8 @@
 # SDK calls atem-sweep deliberately never makes (safety policy: it reads,
 # changes settings and puts them back, runs/stops macros — it never deletes,
-# overwrites stored media, records or streams).
+# overwrites stored media or macros, records or streams, and never changes
+# the video mode or the saved startup state). categories.py counts these as
+# "destructive", except opt-in actions (a reason containing --allow-...).
 # Interface::Method<TAB>reason
 IBMDSwitcherStills::Upload	overwrites a still in the media pool
 IBMDSwitcherClip::UploadFrame	overwrites clip frames in the media pool
@@ -12,3 +14,17 @@ IBMDSwitcherRecordAV::SwitchDisk	switches the recording disk mid-recording
 IBMDSwitcherStreamRTMP::StartStreaming	goes live on the internet
 IBMDSwitcherStreamRTMP::StopStreaming	stops a live stream (only meaningful after starting one)
 IBMDSwitcherCameraControl::SetFlags	camera action (instant autofocus) on a Blackmagic camera; runs with --allow-camera
+IBMDSwitcherMacroPool::Delete	deletes a stored macro
+IBMDSwitcherMacroPool::Upload	overwrites a macro slot
+IBMDSwitcherMacroControl::Record	records into a macro slot (overwrites it)
+IBMDSwitcherMacroControl::RecordUserWait	part of recording a macro
+IBMDSwitcherMacroControl::RecordPause	part of recording a macro
+IBMDSwitcherMacroControl::StopRecording	part of recording a macro
+IBMDSwitcherMediaPool::Clear	clears the media pool
+IBMDSwitcherStillCapture::CaptureStill	captures the program into a media pool still (overwrites it)
+IBMDSwitcherSaveRecall::Save	overwrites the saved startup state
+IBMDSwitcherSaveRecall::Clear	clears the saved startup state
+IBMDSwitcher::SetVideoMode	a video mode change can clear the media pool and reconfigures the switcher
+IBMDSwitcher::SetAutoVideoMode	auto video mode can change the video mode (see SetVideoMode)
+IBMDSwitcherHyperDeck::Record	starts recording on a HyperDeck
+IBMDSwitcherStills::SetInvalid	deletes a still from the media pool
