@@ -1140,6 +1140,22 @@ void MainWindow::onFillBtn(int idx)
         apply("CKTp", emu::cmd::keyType(0, 0, 3));
     }
     apply("CKeF", emu::cmd::keyFill(0, 0, src));
+
+    // The switcher keeps whatever position it had; the recorded profiles
+    // start with the PiP parked far off screen (X 136.56, Y 55.63). Bring a
+    // box that can't be seen into view before it goes on air.
+    Atem::KeDVState d = pipState(m_device.view());
+    PipGeometry g = Compositor::pipGeometry(d, QSizeF(1280, 720));
+    if (!g.box.intersects(QRectF(0, 0, 1280, 720)) || d.sizeX < 50 || d.sizeY < 50) {
+        using namespace emu::cmd;
+        DveParams p;
+        p.sizeX = d.sizeX < 50 ? 0.3 : d.sizeX / 1000.0;
+        p.sizeY = d.sizeY < 50 ? 0.3 : d.sizeY / 1000.0;
+        sendDve(PositionX | PositionY | SizeX | SizeY, p);
+        uiLog(QString("PiP was out of the frame (X %1, Y %2, size %3%): moved to the centre")
+              .arg(d.posX / 1000.0, 0, 'f', 2).arg(d.posY / 1000.0, 0, 'f', 2).arg(qRound(d.sizeX / 10.0)));
+    }
+
     apply("CKOn", emu::cmd::keyOnAir(0, 0, true));
     uiLog(QString("PiP Fill → %1").arg(sourceName(src)));
 }
