@@ -70,6 +70,8 @@ reference recorded from the real ATEM Mini (protocol 2.30, SDK 10.2.1) on
 2026-09-26: `results.json`, `wire.jsonl` (1,018 packets) and `coverage.txt`.
 The emulator's profile ([../core/profiles](../core/profiles)) is built from it.
 
+Emulator results last verified 2026-09-28 on the current code.
+
 | Target | Result |
 |---|---|
 | Real ATEM Mini (record) | 269 passed, 0 failed, 4 skipped (empty macro slots) |

@@ -7,7 +7,7 @@ every test in it:
 
 | Check | Result |
 |---|---|
-| atem-sweep verify, current golden record | 269 passed, 0 failed, 4 skipped (empty macro slots) |
+| atem-sweep verify, current golden record (2026-09-28) | 269 passed, 0 failed, 4 skipped (empty macro slots) |
 | same, second run on the same emulator | 269 passed |
 | original golden record (different start state) | 268 passed; the 1 difference is a test whose output format changed since |
 

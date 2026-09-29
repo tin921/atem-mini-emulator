@@ -38,8 +38,7 @@ ui_*.h
 *.VC.db
 *.VC.VC.opendb
 
-# Logs and capture output
-captured-output.log
+# Logs
 *.log
 
 # Windows

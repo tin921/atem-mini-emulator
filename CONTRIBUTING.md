@@ -36,7 +36,7 @@ Contributions are welcome. Please read this before opening a pull request.
 
 If your contribution changes emulator behavior, include the evidence from the
 real switcher: the atem-sweep test and the recorded packets (`wire.jsonl`)
-that show it. See [docs/capture.md](docs/capture.md) for recording.
+that show it. See [docs/sweep.md](docs/sweep.md) for recording.
 
 ## License
 

@@ -31,8 +31,7 @@ atem-emulator/
 │   ├── profiles/               Recorded switchers (dump.txt, macros.txt)
 │   └── make_profile.py         Profile from an atem-sweep golden record
 ├── sweep/                      atem-sweep: records the real ATEM, verifies the emulator
-├── docs/                       This file, capture and tools guides, screenshot
-├── tools/                      capture.exe: older SDK-level listing (see docs/tools.md)
+├── docs/                       This file, sweep.md (real switcher → emulator)
 └── src/                        The emulator app (window, picture, webcam)
     ├── AtemState.h             Input ids, PiP drawing state, camera input types
     ├── InputSource.h/cpp       SolidColorSource, StaticImageSource, VideoFileSource

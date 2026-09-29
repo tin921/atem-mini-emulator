@@ -1,4 +1,4 @@
-# Protocol capture & reverse engineering
+# From the real switcher to the emulator (atem-sweep)
 
 The ATEM Mini's UDP protocol is undocumented. Blackmagic publishes the
 BMDSwitcherAPI COM SDK but not the wire format underneath it, and no
@@ -60,12 +60,6 @@ Control: that capture is still to do.)
 Keep the old record: the differences are the change.
 
 ---
-
-## Other tools
-
-- `tools/capture-bmd.cpp` (`capture.exe`): an older SDK-level listing (macro
-  names, run status), no packet bytes. It **runs** stored macros; see
-  [tools.md](tools.md).
 
 ## Protocol reference
 

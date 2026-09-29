@@ -15,9 +15,7 @@ as the real device.
 
 > **Guides:**
 > [Emulator core →](core/README.md) · [atem-sweep: recording & conformance →](sweep/README.md) ·
-> [Tech stack →](docs/tech.md) · [Protocol capture →](docs/capture.md)
-
-![ATEM Mini Emulator screenshot](docs/screenshot.png)
+> [Tech stack →](docs/tech.md) · [Real switcher → emulator →](docs/sweep.md)
 
 ---
 
