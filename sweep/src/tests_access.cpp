@@ -110,7 +110,18 @@ void* accessObject(Ctx& c, const char* keyText) {
     if (key == "IBMDSwitcherFairlightAudioCompressor") return processor<IBMDSwitcherFairlightAudioCompressor>(c);
     if (key == "IBMDSwitcherFairlightAudioLimiter") return processor<IBMDSwitcherFairlightAudioLimiter>(c);
     if (key == "IBMDSwitcherFairlightAudioExpander") return processor<IBMDSwitcherFairlightAudioExpander>(c);
-    if (key == "IBMDSwitcherStillCapture") return qi<IBMDSwitcherStillCapture>(c.s.sw);
+    if (key == "IBMDSwitcherStillCapture") {
+        // Offered by one of these, depending on the model.
+        if (auto* p = qi<IBMDSwitcherStillCapture>(c.s.sw)) return p;
+        Com<IBMDSwitcherMediaPool> pool(qi<IBMDSwitcherMediaPool>(c.s.sw));
+        if (auto* p = qi<IBMDSwitcherStillCapture>(pool.p)) return p;
+        if (pool) {
+            Com<IBMDSwitcherStills> stills;
+            SDK_CALL(IBMDSwitcherMediaPool, pool.p, GetStills, stills.out());
+            if (auto* p = qi<IBMDSwitcherStillCapture>(stills.p)) return p;
+        }
+        return qi<IBMDSwitcherStillCapture>(c.s.me);
+    }
     if (key == "IBMDSwitcherMediaPool") return qi<IBMDSwitcherMediaPool>(c.s.sw);
     return nullptr;
 }

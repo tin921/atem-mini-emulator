@@ -186,9 +186,19 @@ void registerMixEffectTests() {
             read<BMDSwitcherTransitionStyle>(c, "current", [&](BMDSwitcherTransitionStyle* v) {
                 return SDK_CALL(IBMDSwitcherTransitionParameters, c.s.trans, GetTransitionStyle, v);
             });
+            // The ATEM Mini has one DVE: while the upstream key is a DVE key the
+            // switcher refuses a DVE transition (recorded, not a failure).
+            bool expectSet = good;
+            if (style == bmdSwitcherTransitionStyleDVE && c.s.key) {
+                BMDSwitcherKeyType type{};
+                SDK_CALL(IBMDSwitcherKey, c.s.key, GetType, &type);
+                bool held = type == bmdSwitcherKeyTypeDVE;
+                c.observe("dveHeldByKey", held);
+                if (held) expectSet = false;
+            }
             probe<BMDSwitcherTransitionStyle>(c, style,
                 [&](BMDSwitcherTransitionStyle v) { return SDK_CALL(IBMDSwitcherTransitionParameters, c.s.trans, SetNextTransitionStyle, v); },
-                [&](BMDSwitcherTransitionStyle* v) { return SDK_CALL(IBMDSwitcherTransitionParameters, c.s.trans, GetNextTransitionStyle, v); }, good);
+                [&](BMDSwitcherTransitionStyle* v) { return SDK_CALL(IBMDSwitcherTransitionParameters, c.s.trans, GetNextTransitionStyle, v); }, expectSet);
         });
     }
     const std::vector<std::pair<BMDSwitcherTransitionSelection, const char*>> selections = {

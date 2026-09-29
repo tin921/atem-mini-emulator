@@ -3,6 +3,7 @@
 // only run when that is safe: inside a backup-protected run on a real switcher
 // (backup first, restore and verify after; see main.cpp) or against the
 // emulator (--verify). They use empty slots and delete what they create.
+#include "tests_access.h"
 #include "tests_common.h"
 #include "transfer.h"
 
@@ -452,9 +453,8 @@ void registerStorageTests() {
         needStorage(c);
         Stills s;
         if (!stills(c, &s)) c.skip("no stills");
-        Com<IBMDSwitcherStillCapture> cap;
-        if (FAILED(c.s.sw->QueryInterface(__uuidof(IBMDSwitcherStillCapture), reinterpret_cast<void**>(cap.out()))) || !cap)
-            c.skip("no still capture");
+        Com<IBMDSwitcherStillCapture> cap(static_cast<IBMDSwitcherStillCapture*>(accessObject(c, "IBMDSwitcherStillCapture")));
+        if (!cap) c.skip("no still capture");
         BOOL available = FALSE;
         c.hr("isAvailable", SDK_CALL(IBMDSwitcherStillCapture, cap.p, IsAvailable, &available));
         c.observe("available", available != FALSE);
