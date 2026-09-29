@@ -153,6 +153,7 @@ QByteArray text(const char* s, int size) {
 } // namespace
 
 Device::Device(QObject* parent) : QObject(parent) {
+    m_uptime.start();
     registerHandlers();
     m_frameTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_frameTimer, &QTimer::timeout, this, &Device::tick);
@@ -953,6 +954,12 @@ void Device::registerHandlers() {
             if (!inTransition) setU8(*style, 2, u8(d, 3));
         }
         send("TrSS", style);
+        // Frames remaining follows the style's rate while no transition runs.
+        if (QByteArray* pos = m_store.find("TrPs", key(u8(d, 1))); pos && !inTransition) {
+            const QByteArray before = *pos;
+            setU8(*pos, 2, static_cast<quint8>(transitionRate()));
+            sendIfChanged("TrPs", pos, before);
+        }
         setDveTaken(dveTakenByTransition());
     };
     // Fade to black ------------------------------------------------------
@@ -1487,7 +1494,11 @@ void Device::registerHandlers() {
     };
 
     // Accepted, nothing to answer: peak level resets, time code request.
-    for (const char* name : { "RFIP", "RFLP", "TiRq" }) h[name] = [](const QByteArray&) {};
+    h["TiRq"] = [this](const QByteArray&) {         // time code request: answered with Time
+        Field t = timeCode();
+        m_out.append(t);
+    };
+    for (const char* name : { "RFIP", "RFLP" }) h[name] = [](const QByteArray&) {};
     // Refused on the ATEM Mini (recorded: nothing changes, no answer).
     for (const char* name : { "TlMe" }) h[name] = [](const QByteArray&) {};
 }
@@ -1617,6 +1628,20 @@ void Device::publishStill(int index, bool valid, const QByteArray& hash, const Q
 // reports no "lock busy" on locking (recorded); with 0 it does.
 void Device::noteStillTransfer(int index) {
     if (QByteArray* lock = m_store.find("LKST", key16(kStillStore))) setU8(*lock, 3, static_cast<quint8>(index));
+}
+
+Field Device::timeCode() const {
+    const double fps = 1000.0 / std::max(1.0, frameIntervalMs());
+    const qint64 frames = static_cast<qint64>(m_uptime.elapsed() * fps / 1000.0);
+    const int perSecond = std::max(1, qRound(fps));
+    const qint64 seconds = frames / perSecond;
+    QByteArray t(8, '\0');
+    setU8(t, 0, static_cast<quint8>(seconds / 3600 % 24));
+    setU8(t, 1, static_cast<quint8>(seconds / 60 % 60));
+    setU8(t, 2, static_cast<quint8>(seconds % 60));
+    setU8(t, 3, static_cast<quint8>(frames % perSecond));
+    setU16(t, 6, 1000);
+    return { "Time", t };
 }
 
 // KeFS byte 6: the keyframes (1 A, 2 B, 4 full) the DVE key is at now, by

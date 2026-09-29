@@ -46,7 +46,8 @@ QString Server::Client::name() const {
 
 Server::Server(Device* device, QObject* parent) : QObject(parent), m_device(device) {
     connect(&m_socket, &QUdpSocket::readyRead, this, &Server::readPending);
-    connect(m_device, &Device::fieldsChanged, this, [this](const FieldList& fields) { broadcast(fields); });
+    connect(m_device, &Device::fieldsChanged, this, [this](const FieldList& fields) { queue(fields); });
+    connect(&m_frame, &QTimer::timeout, this, &Server::flushFrame);
     m_housekeeping.setInterval(50);
     connect(&m_housekeeping, &QTimer::timeout, this, &Server::resendAndExpire);
     m_clock.start();
@@ -58,6 +59,8 @@ bool Server::listen(const QHostAddress& address, quint16 port, QString* error) {
         return false;
     }
     m_housekeeping.start();
+    m_frame.setTimerType(Qt::PreciseTimer);
+    m_frame.start(std::max(1, qRound(m_device->frameIntervalMs())));
     emit log(QString("Listening on %1:%2 as \"%3\"").arg(address.toString()).arg(port).arg(m_device->productName()));
     return true;
 }
@@ -159,31 +162,63 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
         perCommand.append(m_device->handle(name, body));
         at += length;
     }
-    // The switcher sends its state once per frame: a field that a later
-    // command of the packet changes again goes out once, with its last value.
-    // (Within one command every answer stays: some really come in steps.)
-    FieldList response;
-    for (int i = 0; i < perCommand.size(); ++i) {
-        for (const Field& f : perCommand[i]) {
-            bool later = false;
-            const QByteArray instance = FieldStore::instanceKey(f);
-            for (int j = i + 1; j < perCommand.size() && !later; ++j)
-                for (const Field& g : perCommand[j])
-                    if (!f.toSender && !g.toSender && g.name == f.name && FieldStore::instanceKey(g) == instance) {
-                        later = true;
-                        break;
-                    }
-            if (!later) response.append(f);
-        }
-    }
-    response += m_device->endOfPacket();
+    perCommand.append(m_device->endOfPacket());
     if (!names.isEmpty()) emit commandsReceived(client.name(), names);
-    if (response.isEmpty()) {
+    // Answers for this client alone (file transfers, the lock) go at once, as
+    // the switcher sends them; state answers wait for the next frame.
+    FieldList now;
+    for (FieldList& answers : perCommand) {
+        FieldList state;
+        for (const Field& f : answers) (f.toSender ? now : state).append(f);
+        queue(state);
+    }
+    if (now.isEmpty()) {
         sendAck(client, id);
     } else {
-        if (m_verbose) emit log(QString("%1 < %2").arg(client.name(), fieldSummary(response)));
-        broadcast(response, &client, id);
+        if (m_verbose) emit log(QString("%1 < %2").arg(client.name(), fieldSummary(now)));
+        sendFields(client, now, id);
     }
+}
+
+void Server::queue(const FieldList& fields) {
+    if (fields.isEmpty()) return;
+    ++m_batch;
+    for (const Field& f : fields) m_pending.append({ f, m_batch });
+}
+
+// The switcher answers at the next frame with its state at that moment: a
+// field that several commands changed during the frame goes out once, with
+// what it holds now (so a change undone within the frame is never seen).
+// Answers of one command that really come in steps (a new macro's
+// properties) keep their steps.
+void Server::flushFrame() {
+    if (m_pending.isEmpty()) return;
+    FieldList out;
+    for (int i = 0; i < m_pending.size(); ++i) {
+        const Pending& p = m_pending[i];
+        const QByteArray* now = m_device->current(p.field);
+        if (!now) {                      // not state: sent as it was made
+            out.append(p.field);
+            continue;
+        }
+        const QByteArray instance = FieldStore::instanceKey(p.field);
+        bool laterBatch = false, laterSame = false;
+        for (int j = i + 1; j < m_pending.size(); ++j) {
+            const Field& g = m_pending[j].field;
+            if (g.name != p.field.name || FieldStore::instanceKey(g) != instance) continue;
+            (m_pending[j].batch == p.batch ? laterSame : laterBatch) = true;
+        }
+        if (laterBatch) continue;
+        Field f = p.field;
+        if (!laterSame) f.data = *now;
+        out.append(f);
+    }
+    m_pending.clear();
+    if (out.isEmpty()) return;
+    // Every state packet starts with the time code, as on the switcher.
+    if (out.first().name != "Time") out.prepend(m_device->timeCode());
+    if (m_verbose) emit log(QString("frame < %1").arg(fieldSummary(out)));
+    broadcast(out);
 }
 
 void Server::handleSyn(const QByteArray& data, const QHostAddress& from, quint16 port, quint16 session) {

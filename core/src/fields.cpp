@@ -80,6 +80,13 @@ QByteArray FieldStore::instanceKey(const Field& field) {
     return d.left(keyLength(field.name));
 }
 
+const QByteArray* FieldStore::findInstance(const Field& field) const {
+    const QByteArray key = instanceKey(field);
+    for (const auto& f : m_fields)
+        if (f.name == field.name && instanceKey(f) == key) return &f.data;
+    return nullptr;
+}
+
 bool FieldStore::replace(const Field& field) {
     QByteArray* stored = find(field.name.constData(), field.data.left(keyLength(field.name)));
     if (!stored) return false;

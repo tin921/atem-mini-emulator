@@ -66,6 +66,8 @@ public:
     // The bytes that tell instances of a field type apart (leading bytes, or
     // for media pool and Fairlight fields the index / input and source ids).
     static QByteArray instanceKey(const Field& field);
+    // The stored instance a field is a copy of (same name and instance key).
+    const QByteArray* findInstance(const Field& field) const;
     // Replaces the stored instance with the same name and key; false if none.
     bool replace(const Field& field);
 

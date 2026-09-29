@@ -71,11 +71,21 @@ private:
     void sendAck(Client& client, quint16 id);
     void broadcast(const FieldList& fields, Client* origin = nullptr, int originAck = -1);
     void resendAndExpire();
+    // State answers go out once per video frame, as on the switcher.
+    void queue(const FieldList& fields);
+    void flushFrame();
     QByteArray header(quint8 flags, int length, quint16 session, quint16 ack, quint16 id) const;
 
     Device* m_device;
     QUdpSocket m_socket;
     QTimer m_housekeeping;
+    QTimer m_frame;
+    struct Pending {
+        Field field;
+        quint64 batch;   // one command's answers (or one device update)
+    };
+    QList<Pending> m_pending;
+    quint64 m_batch = 0;
     QElapsedTimer m_clock;
     QMap<QString, Client> m_clients;   // "address:port"
     quint16 m_nextSession = 0x28;

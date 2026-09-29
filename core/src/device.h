@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QMap>
 #include <QObject>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QVector>
 #include <functional>
@@ -99,6 +100,12 @@ public:
     QString productName() const;
     // The full state, in dump order, for a newly connected client.
     FieldList connectDump() const { return m_store.dump(); }
+    // The state field's content now (for answers sent at the next frame);
+    // nullptr for fields that aren't state (warnings, transfers).
+    const QByteArray* current(const Field& field) const { return m_store.findInstance(field); }
+    // Time: the switcher's time code (hours, minutes, seconds, frames, then
+    // 00 00 03 e8 as recorded), sent at the start of every state packet.
+    Field timeCode() const;
 
     // Applies one command. Returns the fields to send to every client; the
     // switcher sends nothing back for commands it rejects.
@@ -223,6 +230,7 @@ private:
     };
     QMap<QString, Animation> m_animations;
     QTimer m_frameTimer;
+    QElapsedTimer m_uptime;   // the time code counts from start-up
 };
 
 } // namespace emu
