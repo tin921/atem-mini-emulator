@@ -1058,6 +1058,7 @@ void Device::registerHandlers() {
     h["RFlK"] = [this](const QByteArray& d) {       // run flying key to A / B / full
         QByteArray* dve = m_store.find("KeDV", key(u8(d, 1), u8(d, 2)));
         if (!dve) return;
+        const QByteArray before = *dve;
         quint8 frame = u8(d, 4);
         if (frame == 3) {                           // full: size 1, centred, no crop
             setU32(*dve, 4, 1000);
@@ -1074,7 +1075,9 @@ void Device::registerHandlers() {
             return;
         }
         send("KeDV", dve);
-        updateAtKeyFrames(u8(d, 1), u8(d, 2));
+        // Which keyframes it is at is only re-sent when the key moved
+        // (recorded: running to full while already full sends no KeFS).
+        if (*dve != before) updateAtKeyFrames(u8(d, 1), u8(d, 2));
     };
 
     h["SFKF"] = [this](const QByteArray& d) {       // store the fly key as keyframe A / B / both

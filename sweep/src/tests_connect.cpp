@@ -7,20 +7,27 @@
 
 namespace {
 
-void connectOther(Ctx& c, const QString& address) {
+// fallback: the address answers nothing, so the SDK may fall back to USB.
+void connectOther(Ctx& c, const QString& address, bool fallback) {
     Switcher other;
     BMDSwitcherConnectToFailure fail = bmdSwitcherConnectToFailureNoResponse;
     QElapsedTimer t;
     t.start();
     HRESULT hr = other.connect(address, &fail);
-    // When nothing answers, the SDK falls back to an ATEM on this PC's USB and
-    // connects to that (read-only here: connected, then disconnected). The
-    // outcome depends on what is plugged in, not on the switcher under test:
-    // recorded, not compared.
-    c.observe("connect (informational)", hrText(hr));
-    if (FAILED(hr)) c.observe("failReason (informational)", fourcc(static_cast<uint32_t>(fail)));
-    c.observe("connected (informational)", other.connected());
-    c.observe("note (informational)", other.connected() ? "connected through the SDK's USB fallback" : "no connection");
+    if (!fallback) {
+        c.hr("connect", hr);
+        if (FAILED(hr)) c.observe("failReason", fourcc(static_cast<uint32_t>(fail)));
+        c.observe("connected", other.connected());
+    } else {
+        // Nothing answers there, so the SDK falls back to an ATEM on this PC's
+        // USB and connects to that (read-only here: connected, then
+        // disconnected). The outcome depends on what is plugged in, not on the
+        // switcher under test: recorded, not compared.
+        c.observe("connect (informational)", hrText(hr));
+        if (FAILED(hr)) c.observe("failReason (informational)", fourcc(static_cast<uint32_t>(fail)));
+        c.observe("connected (informational)", other.connected());
+        c.observe("note (informational)", other.connected() ? "connected through the SDK's USB fallback" : "no connection");
+    }
     c.observe("ms (informational)", static_cast<double>(t.elapsed()));
 }
 
@@ -45,11 +52,11 @@ void registerConnectTests() {
     });
 
     addTest("connect.bad-address", "ConnectTo a malformed address", [](Ctx& c) {
-        connectOther(c, "not-an-address");
+        connectOther(c, "not-an-address", true);
     });
 
     addTest("connect.unreachable", "ConnectTo an address nobody answers", [](Ctx& c) {
-        connectOther(c, "192.0.2.1");   // TEST-NET-1: never routed
+        connectOther(c, "192.0.2.1", true);   // TEST-NET-1: never routed
     });
 
     addTest("connect.main", "Connect (keeps this connection for the sweep)", [](Ctx& c) {
@@ -96,7 +103,7 @@ void registerConnectTests() {
     addTest("connect.second-client", "A second connection at the same time", [](Ctx& c) {
         c.needConnection();
         if (c.opt.target.isEmpty()) c.skip("USB allows one control connection at a time");
-        connectOther(c, c.opt.connectAddress);
+        connectOther(c, c.opt.connectAddress, false);
         BSTR name = nullptr;
         c.observe("firstStillWorks", SUCCEEDED(SDK_CALL(IBMDSwitcher, c.s.sw, GetProductName, &name)));
         takeBstr(name);

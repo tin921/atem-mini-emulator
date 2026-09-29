@@ -79,8 +79,12 @@ QString brief(const QJsonValue& v) {
 //    drops depends on sources used earlier (the key remembers fills across
 //    type changes, even from a previous run). Tally itself is still compared
 //    through input.properties (programTallied / previewTallied).
+//  - Stills/lbsy: "lock busy" after locking the media pool. The real ATEM sent
+//    the same packets in the same order in two recordings (2026-09-26 and
+//    09-28), and the SDK fired it in one and not the other.
 bool timingEvent(const QString& e) {
-    return e == "Switcher/setc" || (e.startsWith("Input:") && (e.endsWith("/iprt") || e.endsWith("/ipvt")));
+    return e == "Switcher/setc" || e == "Stills/lbsy" ||
+           (e.startsWith("Input:") && (e.endsWith("/iprt") || e.endsWith("/ipvt")));
 }
 
 std::set<QString> eventSet(const QJsonObject& result) {
