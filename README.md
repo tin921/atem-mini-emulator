@@ -43,8 +43,8 @@ and quirks, and answers once per video frame like the device. In the window:
   Control, through the SDK, or with **Save Output**; run, loop, rename,
   upload and download.
 - **Cameras** — each a colour, a still image or a looping video.
-- **Virtual webcam** — the program picture as "ATEM Mini Emulator" in OBS,
-  Zoom or the Camera app.
+- **Virtual webcam** — the program picture as "ATEM Emulator Virtual Camera"
+  in OBS and other DirectShow apps.
 - **Several clients** at once, every change sent to all of them, and a log
   of every command received.
 

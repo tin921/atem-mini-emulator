@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <dshow.h>
 #include "vcam_shared.h"
+#include <atomic>
 
 #pragma comment(lib, "strmiids.lib")
 #pragma comment(lib, "ole32.lib")
@@ -161,7 +162,8 @@ struct CVCamPin : IPin, IAMStreamConfig, IMyKsPropertySet {
 
     HANDLE thread    = nullptr;
     HANDLE stopEvt   = nullptr;
-    bool   streaming = false;
+    std::atomic<bool> streaming{ false };
+    std::atomic<long> generation{ 0 };   // one per StartStreaming: a thread left over from an earlier start ends
 
     HANDLE           hSharedMem = nullptr;
     HANDLE           hFrameEvt  = nullptr;
@@ -305,38 +307,61 @@ struct CVCamPin : IPin, IAMStreamConfig, IMyKsPropertySet {
 
     // ── Streaming thread ────────────────────────────────────────────────────────
 
+    // The shared frame stays mapped until the pin is destroyed: a frame thread
+    // may outlive StopStreaming (below), and it holds a reference to the pin.
     void StartStreaming() {
         if (streaming) return;
-        streaming = true;
         ResetEvent(stopEvt);
 
-        hSharedMem = OpenFileMappingA(FILE_MAP_READ, FALSE, kSharedMemName);
-        if (hSharedMem)
+        if (!hSharedMem) hSharedMem = OpenFileMappingA(FILE_MAP_READ, FALSE, kSharedMemName);
+        if (hSharedMem && !pFrame)
             pFrame = (VCamSharedFrame*)MapViewOfFile(hSharedMem, FILE_MAP_READ, 0, 0, 0);
-        hFrameEvt = OpenEventA(SYNCHRONIZE, FALSE, kSharedEventName);
+        if (!hFrameEvt) hFrameEvt = OpenEventA(SYNCHRONIZE, FALSE, kSharedEventName);
+        if (allocator) allocator->Commit();            // StopStreaming decommits it
 
-        thread = CreateThread(nullptr, 0, ThreadProc, this, 0, nullptr);
+        const long gen = ++generation;
+        streaming = true;
+        AddRef();                                       // the thread's reference, released as it ends
+        auto* start = new ThreadStart{ this, gen };
+        thread = CreateThread(nullptr, 0, ThreadProc, start, 0, nullptr);
+        if (!thread) { delete start; streaming = false; Release(); }
     }
 
     void StopStreaming() {
         if (!streaming) return;
         streaming = false;
         SetEvent(stopEvt);
-        if (thread) { WaitForSingleObject(thread, 3000); CloseHandle(thread); thread = nullptr; }
-        if (allocator) allocator->Decommit();
-        if (pFrame)     { UnmapViewOfFile(pFrame);  pFrame     = nullptr; }
-        if (hSharedMem) { CloseHandle(hSharedMem);  hSharedMem = nullptr; }
-        if (hFrameEvt)  { CloseHandle(hFrameEvt);   hFrameEvt  = nullptr; }
+        if (allocator) allocator->Decommit();          // wakes a thread waiting in GetBuffer
+        if (thread) {
+            // A paused renderer can hold the thread in Receive until the graph
+            // runs or stops, so don't wait forever: the thread ends by itself
+            // once Receive returns, and the pin (and the mapped frame) stays
+            // alive until it has.
+            WaitForSingleObject(thread, 3000);
+            CloseHandle(thread);
+            thread = nullptr;
+        }
     }
 
-    static DWORD WINAPI ThreadProc(LPVOID p) { ((CVCamPin*)p)->Loop(); return 0; }
+    struct ThreadStart { CVCamPin* pin; long gen; };
+    static DWORD WINAPI ThreadProc(LPVOID p) {
+        auto* start = static_cast<ThreadStart*>(p);
+        CVCamPin* pin = start->pin;
+        const long gen = start->gen;
+        delete start;
+        pin->Loop(gen);
+        pin->Release();
+        return 0;
+    }
 
-    void Loop() {
+    bool Current(long gen) const { return streaming && generation == gen; }
+
+    void Loop(long gen) {
         REFERENCE_TIME ts     = 0;
         long           lastId = -1;
         const DWORD stride    = kVCamWidth * 4;
 
-        while (streaming) {
+        while (Current(gen)) {
             // Wait up to 100ms for a new frame signal (or stop)
             if (hFrameEvt) {
                 HANDLE h[2] = { stopEvt, hFrameEvt };
@@ -345,7 +370,7 @@ struct CVCamPin : IPin, IAMStreamConfig, IMyKsPropertySet {
             } else {
                 if (WaitForSingleObject(stopEvt, 33) == WAIT_OBJECT_0) break;
             }
-            if (!streaming) break;
+            if (!Current(gen)) break;
 
             // Check for new frame
             if (pFrame) {

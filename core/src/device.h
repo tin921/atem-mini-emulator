@@ -212,6 +212,8 @@ private:
         QByteArray data;
         int sent = 0, acked = 0;    // download: chunks
         bool described = false;     // upload: FTFD received
+        int scanned = 0;            // upload of a still: bytes of data unpacked so far,
+        qint64 unpacked = 0;        //   and their size once unpacked
         QByteArray name, description, hash;
     };
     QHash<quint16, Transfer> m_transfers;

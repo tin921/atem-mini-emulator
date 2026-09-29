@@ -16,7 +16,7 @@ uses Blackmagic's switcher SDK connects to it as it would to the real device.
 | Input sources | Per camera: solid colour, still image or looping video file |
 | Macro pool | The switcher's 100 slots: record in ATEM Software Control or through the SDK, or **Save Output** here; run with pauses, user waits and loop; rename; delete; upload and download |
 | Live preview | 640×360 program picture at 30 fps (QPainter, no GPU) |
-| Virtual camera | A DirectShow webcam — "ATEM Mini Emulator" in OBS, Zoom, the Camera app |
+| Virtual camera | A DirectShow webcam — "ATEM Emulator Virtual Camera" in OBS and other DirectShow apps |
 | Protocol log | Connections and every command received, in the window |
 | Several clients | Every change reaches every connected client |
 
@@ -137,8 +137,10 @@ recorded from the real ATEM Mini with the profile.
 ### Virtual camera
 
 **Virtual Camera ON** registers `AtemVirtualCam.dll` (under HKCU, no admin)
-and streams the program picture; it appears as **"ATEM Mini Emulator"** in
-OBS, Zoom, the Windows Camera app and any DirectShow application.
+and streams the program picture at 30 fps; it appears as **"ATEM Emulator
+Virtual Camera"** in OBS and other DirectShow applications (apps built on
+Media Foundation only, such as the Windows Camera app, don't list DirectShow
+cameras). **Virtual Camera OFF** unregisters it.
 
 ### Network
 

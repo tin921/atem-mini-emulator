@@ -35,8 +35,11 @@ QImage VideoFileSource::currentFrame() const
 {
     QMutexLocker lock(&m_mutex);
     if (m_lastFrame.isNull()) {
-        QImage placeholder(1280, 720, QImage::Format_RGB32);
-        placeholder.fill(Qt::darkGray);
+        static const QImage placeholder = [] {
+            QImage p(1280, 720, QImage::Format_RGB32);
+            p.fill(Qt::darkGray);
+            return p;
+        }();
         return placeholder;
     }
     return m_lastFrame;

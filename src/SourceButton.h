@@ -15,6 +15,7 @@ protected:
 
 private:
     QImage m_thumb;
+    QImage m_scaled;          // m_thumb at the button's size, made when either changes
     bool   m_active = false;
     Mode   m_mode;
 };

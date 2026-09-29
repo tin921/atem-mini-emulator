@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QTextStream>
 #include <algorithm>
+#include <cstring>
 #include <optional>
 #include <tuple>
 
@@ -1390,11 +1391,11 @@ void Device::registerHandlers() {
         const quint16 id = u16(d, 0);
         Transfer t;
         t.store = u16(d, 2);
-        t.index = static_cast<int>(u32(d, 4));
-        if (t.store == kMacroStore && t.index < m_pool.size() && m_pool[t.index].used) {
+        t.index = static_cast<int>(u32(d, 4));     // negative for 0x80000000 and up: refused below
+        if (t.store == kMacroStore && t.index >= 0 && t.index < m_pool.size() && m_pool[t.index].used) {
             const Macro& m = m_pool[t.index];
             t.data = m.bytes.isEmpty() ? Macro::encode(m.ops) : m.bytes;
-        } else if (t.store == kStillStore && stillValid(t.index)) {
+        } else if (t.store == kStillStore && t.index >= 0 && stillValid(t.index)) {
             t.data = stillBytes(t.index);
             noteStillTransfer(t.index);
         } else {
@@ -1431,8 +1432,8 @@ void Device::registerHandlers() {
         t.index = static_cast<int>(u32(d, 4));
         t.size = u32(d, 8);
         const QByteArray* pool = m_store.find("_mpl");
-        const bool ok = t.store == kMacroStore ? t.index < m_pool.size()
-                      : t.store == kStillStore && pool && t.index < u8(*pool, 0);
+        const bool ok = t.index >= 0 && (t.store == kMacroStore ? t.index < m_pool.size()
+                                        : t.store == kStillStore && pool && t.index < u8(*pool, 0));
         if (!ok) {
             QByteArray error(4, '\0');
             setU16(error, 0, id);
@@ -1524,20 +1525,23 @@ void Device::sendChunks(quint16 id) {
 
 namespace {
 // Size of a still once its run-length encoding is undone: 8-byte words;
-// FE FE FE FE FE FE FE FE, count, word repeats word count times.
-qint64 unpackedSize(const QByteArray& rle) {
-    static const QByteArray kRun(8, '\xfe');
-    qint64 size = 0;
-    for (int at = 0; at + 8 <= rle.size();) {
-        if (rle.mid(at, 8) == kRun && at + 24 <= rle.size()) {
-            size += 8 * static_cast<qint64>(static_cast<quint64>(u32(rle, at + 8)) << 32 | u32(rle, at + 12));
-            at += 24;
+// FE FE FE FE FE FE FE FE, count, word repeats word count times. Carries on
+// from *at, so an upload is scanned once as its chunks arrive (the SDK sends
+// the description first, so this runs after every chunk), and stops before a
+// word or run that hasn't fully arrived.
+void unpackMore(const QByteArray& rle, int* at, qint64* size) {
+    static const char kRun[8] = { '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe', '\xfe' };
+    const char* d = rle.constData();
+    while (*at + 8 <= rle.size()) {
+        if (std::memcmp(d + *at, kRun, 8) == 0) {
+            if (*at + 24 > rle.size()) break;
+            *size += 8 * static_cast<qint64>(static_cast<quint64>(u32(rle, *at + 8)) << 32 | u32(rle, *at + 12));
+            *at += 24;
         } else {
-            size += 8;
-            at += 8;
+            *size += 8;
+            *at += 8;
         }
     }
-    return size;
 }
 } // namespace
 
@@ -1545,8 +1549,9 @@ qint64 unpackedSize(const QByteArray& rle) {
 void Device::finishUpload(quint16 id) {
     auto it = m_transfers.find(id);
     if (it == m_transfers.end() || !it->described) return;
-    const Transfer& t = *it;
-    const qint64 have = t.store == kStillStore ? unpackedSize(t.data) : t.data.size();
+    Transfer& t = *it;
+    if (t.store == kStillStore) unpackMore(t.data, &t.scanned, &t.unpacked);
+    const qint64 have = t.store == kStillStore ? t.unpacked : t.data.size();
     if (have < t.size) return;
 
     if (t.store == kMacroStore) {

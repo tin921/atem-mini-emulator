@@ -11,7 +11,13 @@ SourceButton::SourceButton(const QString& text, Mode mode, QWidget* parent)
     setFocusPolicy(Qt::NoFocus);
 }
 
-void SourceButton::setThumb(const QImage& img) { m_thumb = img; update(); }
+void SourceButton::setThumb(const QImage& img)
+{
+    if (img.cacheKey() == m_thumb.cacheKey()) return;   // the same picture: nothing to redraw
+    m_thumb = img;
+    m_scaled = QImage();
+    update();
+}
 void SourceButton::setActive(bool a)            { m_active = a;  update(); }
 
 void SourceButton::paintEvent(QPaintEvent*)
@@ -22,8 +28,11 @@ void SourceButton::paintEvent(QPaintEvent*)
     QRect r = rect();
 
     // Thumbnail or solid fallback
-    if (!m_thumb.isNull())
-        p.drawImage(r, m_thumb.scaled(r.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    if (!m_thumb.isNull()) {
+        if (m_scaled.size() != r.size())
+            m_scaled = m_thumb.scaled(r.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        p.drawImage(r.topLeft(), m_scaled);
+    }
     else
         p.fillRect(r, QColor(20, 20, 20));
 

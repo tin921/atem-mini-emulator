@@ -1533,11 +1533,15 @@ void MainWindow::onMacroFinished(int)
 
 // ── Preview & thumbnails ──────────────────────────────────────────────────────
 
+// A thumbnail is only remade when its source has a new frame (a colour,
+// photo or the next video frame), not on every refresh.
 void MainWindow::updateSourceThumbs()
 {
     for (int i = 0; i < kN; ++i) {
-        QImage f = sourceForId(kSrc[i].id)->currentFrame()
-                   .scaled(240, 135, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        const QImage frame = sourceForId(kSrc[i].id)->currentFrame();
+        if (frame.cacheKey() == m_thumbKeys[i]) continue;
+        m_thumbKeys[i] = frame.cacheKey();
+        QImage f = frame.scaled(240, 135, Qt::IgnoreAspectRatio, Qt::FastTransformation);
         if (m_pgmBtns[i])  m_pgmBtns[i]->setThumb(f);
         if (m_fillBtns[i]) m_fillBtns[i]->setThumb(f);
     }
@@ -1569,6 +1573,8 @@ Atem::KeDVState MainWindow::pipState(const emu::SwitcherView& v) const
 void MainWindow::onRefreshPreview()
 {
     if (!m_ready) return;
+    // Minimised: nobody sees the picture, unless the virtual camera sends it.
+    if (isMinimized() && !m_webcamActive) return;
     emu::SwitcherView v = m_device.view();
 
     // Program, mixed towards preview while a transition runs.

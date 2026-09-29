@@ -26,20 +26,23 @@ class SolidColorSource : public InputSource
     Q_OBJECT
 public:
     explicit SolidColorSource(const QColor& c = Qt::black, QObject* parent = nullptr)
-        : InputSource(parent), m_color(c) {}
+        : InputSource(parent) { fill(c); }
 
-    QImage currentFrame() const override {
-        QImage img(1280, 720, QImage::Format_RGB32);
-        img.fill(m_color);
-        return img;
-    }
+    // Made once per colour: the preview asks for frames 30 times a second.
+    QImage currentFrame() const override { return m_image; }
     QString label() const override { return m_color.name(); }
 
-    void setColor(const QColor& c) { m_color = c; emit frameReady(); }
+    void setColor(const QColor& c) { fill(c); emit frameReady(); }
     QColor color() const { return m_color; }
 
 private:
+    void fill(const QColor& c) {
+        m_color = c;
+        m_image = QImage(1280, 720, QImage::Format_RGB32);
+        m_image.fill(c);
+    }
     QColor m_color;
+    QImage m_image;
 };
 
 // ── Static image source ────────────────────────────────────────────────────
@@ -58,7 +61,10 @@ public:
         return true;
     }
     QImage currentFrame() const override {
-        if (m_image.isNull()) { QImage b(1280,720,QImage::Format_RGB32); b.fill(Qt::black); return b; }
+        if (m_image.isNull()) {
+            static const QImage black = [] { QImage b(1280, 720, QImage::Format_RGB32); b.fill(Qt::black); return b; }();
+            return black;
+        }
         return m_image;
     }
     QString label() const override { return m_path.section('/', -1).section('\\', -1); }

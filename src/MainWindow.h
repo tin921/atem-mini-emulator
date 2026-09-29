@@ -86,6 +86,7 @@ private:
     void updateBorderColorBtn();
     void updateColorBtnStyle(int i);
     void updateSourceThumbs();
+    qint64 m_thumbKeys[6] = {};           // the frame each source's thumbnail was made from
     void updateSnapshotDisplay(int slot);
     void applyMacroExtras(int slot);
     void pushWebcamFrame(const QImage& img);
