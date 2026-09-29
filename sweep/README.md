@@ -76,7 +76,28 @@ atem-sweep 192.168.0.240 --capture 600 --out runs\asc
 
 atem-sweep --list                     # all tests
 atem-sweep 192.168.0.240 --only fly.  # just the PiP position/size tests
+
+# Full backup / restore of the switcher (see Backup)
+atem-sweep 192.168.0.240 --backup
+atem-sweep 192.168.0.240 --restore backups\<folder>
+atem-sweep --compare backups\A backups\B
+
+# Make a golden record from a run (drops transferred picture bytes)
+python slim_record.py runs\<run> golden\<name>
 ```
+
+Opt-in actions: `--allow-camera` (autofocus on a Blackmagic camera),
+`--allow-mic-power` (plug-in power on the mic inputs).
+
+### Test groups
+
+| Prefix | Tests | What |
+|---|---:|---|
+| `connect.` `switcher.` `input.` `me.` `trans.` `key.` `fly.` `dve.` `pip` `dsk.` `macro.` `media.` `audio.` `hyperdeck` `camera` `record` `stream` | 273 | the original sweep: everything obs-atem and the SDK samples use |
+| `probe.` | 2 | read-only: which interfaces and features the switcher has |
+| `g.` | 1,563 | generated from the SDK (`coverage/gen_tests.py`): every setting of 26 interfaces with good and bad values, getters, resets, callbacks; each test puts back every value of the object it touched |
+| `m.` | 23 | hand-written: several-argument calls, keyframe store/clear, iterator lookups |
+| `s.` | 20 | stored content: macros and stills listed, created, changed, deleted — backup-protected |
 
 Needs ATEM Software Control installed (the SDK's COM library) and Qt's `bin`
 folder on `PATH` (or run `windeployqt atem-sweep.exe`).
@@ -145,10 +166,20 @@ Behaviour of the real switcher found on the way:
 
 ## Golden record
 
-[golden/atem-mini_sdk10.2.1_proto2.30/](golden/atem-mini_sdk10.2.1_proto2.30) is the
-reference recorded from the real ATEM Mini (protocol 2.30, SDK 10.2.1) on
-2026-09-26: `results.json`, `wire.jsonl` (1,018 packets) and `coverage.txt`.
-The emulator's profile ([../core/profiles](../core/profiles)) is built from it.
+Two records of the real ATEM Mini (protocol 2.30, SDK 10.2.1), each
+`results.json`, `wire.jsonl` and `coverage.txt`:
+
+| Record | Tests | Use |
+|---|---:|---|
+| [golden/atem-mini_sdk10.2.1_proto2.30/](golden/atem-mini_sdk10.2.1_proto2.30) (2026-09-26) | 273 | what the emulator passes today; its profile ([../core/profiles](../core/profiles)) is built from it |
+| [golden/atem-mini_sdk10.2.1_proto2.30_2026-09-28/](golden/atem-mini_sdk10.2.1_proto2.30_2026-09-28) | 1,881 (1,864 passed, 17 skipped) | the full sweep: every safe SDK function the Mini has, storage included — the target for emulator work |
+
+The 2026-09-28 record was taken in a backup-protected run (backup, sweep,
+storage restore verified, final backup identical to the first). Its
+`wire.jsonl` has 22,823 packets; file-transfer payloads (the bytes of the
+switcher's stills and macros) are cut to their header plus length and
+SHA-256 by `slim_record.py`, so the record carries no pictures; the full run
+is kept locally under `runs/`.
 
 Emulator results last verified 2026-09-28 on the current code.
 
@@ -251,29 +282,29 @@ callback interfaces a client implements) is in exactly one category.
 [coverage/categories.py](coverage/categories.py) sorts them from an emulator
 verify run and writes two lists:
 
-| List | Category | Methods (2026-09-28) | Meaning |
+| List | Category | Methods (2026-09-29) | Meaning |
 |---|---|---:|---|
 | [api-supported.tsv](coverage/api-supported.tsv) | 1 emulator | 252 | recorded on the real ATEM, emulated and verified |
-| | 2 samples | 0 | used by the SDK samples, not yet recorded |
-| | 3 sweep | 398 | every other safe function the ATEM Mini has: still to record, then emulate |
+| | 2 samples | 1 | used by the SDK samples, recorded, emulator to do |
+| | 3 sweep | 391 | every other safe function the Mini has: 390 recorded (emulator to do), 1 not recorded (mic plug-in power, opt-in) |
 | | 4 hardware | 74 | safe and on the Mini, but needs hardware this setup lacks: a HyperDeck, a Blackmagic camera ([needs-hardware.txt](coverage/needs-hardware.txt)) |
-| [api-unsupported.tsv](coverage/api-unsupported.tsv) | 5 not on mini | 525 | the ATEM Mini doesn't have it ([not-on-mini.txt](coverage/not-on-mini.txt)) |
-| | 6 destructive | 15 | deletes, overwrites stored content, records ([excluded.txt](coverage/excluded.txt)) |
+| [api-unsupported.tsv](coverage/api-unsupported.tsv) | 5 not on mini | 541 | the ATEM Mini doesn't have it — all recorded by the probe ([not-on-mini.txt](coverage/not-on-mini.txt)) |
+| | 6 destructive | 5 | can't be undone: the startup state, the video mode, HyperDeck recording ([excluded.txt](coverage/excluded.txt)) |
 | | **total** | **1,264** | |
 
 ```powershell
-python coverage\categories.py <verify run>\results.json   # also writes coverage\api-categories.txt
+python coverage\categories.py --verify <emulator verify run>\results.json --record <real ATEM run>\results.json
 ```
 
-"Not on mini" is *recorded* when the real ATEM refused the interface in a
-sweep run, and *expected* (400 of the 525) until a read-only probe on the
-real ATEM confirms it. How methods move between categories:
+Category 1 counts a method only when every test that calls it passed in the
+emulator verify run (each result lists its SDK calls). How methods move
+between categories:
 
 ```text
  3 sweep, 2 samples ──add a sweep test, record the real ATEM──► recorded
  recorded ──extend core/src/device.cpp until verify passes──► 1 emulator
  4 hardware ──connect the HyperDeck / Blackmagic camera──► 3 sweep
- 5 not on mini (expected) ──read-only probe on the real ATEM──► 5 (recorded), or 3
+ not-on-mini.txt entry ──probe.interfaces / probe.features on the real ATEM──► 5, or back to 3
 ```
 
 

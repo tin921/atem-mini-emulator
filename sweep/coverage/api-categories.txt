@@ -1,12 +1,14 @@
 SDK methods (current interfaces, callbacks excluded): 1264
 emulator verify run: verify-core-20260928-204052
+real ATEM record runs: 20260928-234910-full-record
 
-supported      708
-  1 emulator      252   recorded on the real ATEM and emulated (verified)
-  2 samples         0   used by the SDK samples, not yet emulated
-  3 sweep         382   other safe ATEM Mini functions, still to record and emulate
+supported      718
+  1 emulator      252   recorded on the real ATEM, emulated and verified
+  2 samples         1   used by the SDK samples, not yet emulated
+  3 sweep         391   other safe ATEM Mini functions, not yet emulated
+                       (2 + 3: 391 recorded, emulator to do; 1 not recorded yet)
   4 hardware       74   need hardware the test setup lacks (HyperDeck, Blackmagic camera)
-unsupported    556
-  5 not on mini   541   (0 of them expected, to confirm with a read-only probe)
-  6 destructive    15   deletes, overwrites stored content, records
+unsupported    546
+  5 not on mini   541   recorded by the probe on the real ATEM
+  6 destructive     5   can't be undone (startup state, video mode, recording)
 total         1264
