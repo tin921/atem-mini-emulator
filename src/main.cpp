@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSurfaceFormat>
+#include <QTimer>
 
 #ifndef ATEM_EMU_PROFILES
 #define ATEM_EMU_PROFILES ""
@@ -33,7 +34,10 @@ int main(int argc, char* argv[])
     QCommandLineOption listen("listen", "Address to listen on (default: all).", "address", "0.0.0.0");
     QCommandLineOption reference("reference", "Start exactly as recorded: no saved macros are loaded or saved "
                                               "(for checking the emulator with atem-sweep).");
-    parser.addOptions({ profile, listen, reference });
+    QCommandLineOption screenshot("screenshot", "Save the window to FILE after a few seconds and exit "
+                                                "(for documentation; the preview shows its guides).", "file");
+    QCommandLineOption macro("macro", "With --screenshot: run macro N (1-100) first.", "n");
+    parser.addOptions({ profile, listen, reference, screenshot, macro });
     parser.process(app);
 
     Logger::instance().open();
@@ -46,6 +50,16 @@ int main(int argc, char* argv[])
     MainWindow w(options);
     if (!w.isReady()) return 1;
     w.show();
+
+    if (parser.isSet(screenshot)) {
+        const QString file = parser.value(screenshot);
+        const int slot = parser.isSet(macro) ? parser.value(macro).toInt() - 1 : -1;
+        QTimer::singleShot(500, &w, [&w, slot] { w.prepareScreenshot(slot); });
+        QTimer::singleShot(3000, &w, [&w, file] {
+            if (!w.grab().save(file)) qWarning("could not save %s", qPrintable(file));
+            w.close();
+        });
+    }
 
     return app.exec();
 }

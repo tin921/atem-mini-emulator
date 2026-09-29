@@ -1270,6 +1270,15 @@ void MainWindow::onMacroRun()
     apply("MAct", emu::cmd::macroAction((quint16)slot, 0));
 }
 
+void MainWindow::prepareScreenshot(int macroSlot)
+{
+    if (macroSlot >= 0 && macroSlot < m_macroList->count()) {
+        m_macroList->setCurrentRow(macroSlot);
+        onMacroRun();
+    }
+    m_preview->setShowGuides(true);
+}
+
 void MainWindow::onMacroUpdate()
 {
     auto* sel = selectedMacroItem(); if (!sel) return;

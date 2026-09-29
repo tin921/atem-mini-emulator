@@ -53,6 +53,7 @@ It listens on **UDP 0.0.0.0:9910** at start. Options:
 | `--listen ADDRESS` | Listen on one address only, e.g. `127.0.0.2` |
 | `--profile DIR` | Emulate another recorded switcher (default `profiles/atem-mini_proto2.30`; also `atem-mini_proto2.30_2026-09-28`) |
 | `--reference` | Start exactly as recorded: saved macros are not loaded or saved (for checks against the recordings) |
+| `--screenshot FILE [--macro N]` | For documentation: run macro N, show the preview's axes and grid, save the window to FILE and exit |
 
 The build also makes `atem-emu.exe`, the same switcher without a window
 ([core/](core)). Build details: [docs/overview.md](docs/overview.md#build).
@@ -106,12 +107,19 @@ Click a **Fill** button to show that source as the PiP (the key becomes a DVE
 key and goes on air); click the lit one again to take the PiP off air.
 
 On the program picture, drag the PiP to move it, or drag one of its corner
-handles (shown while the mouse is over the picture) to resize it; the
-opposite corner stays put, and **Lock** keeps the proportions. While you
-drag, a grid of 2 × 2 units (16 × 9 cells, plus dashed centre lines) is
-drawn; hold **Shift** to snap to it — a moved PiP puts its nearest edge or
-centre on a line, a dragged corner lands on a grid point. Esc during a drag
-puts it back.
+handles to resize it; the opposite corner stays put, and **Lock** keeps the
+proportions (the axis you drag along more sets the size). While the mouse is
+over the picture it shows the switcher's axes: the origin 0 in the centre,
++Y up, a tick per unit, the edges (±16, ±9) and halfway points (±8, ±4.5)
+labelled. While you drag, a grid of one unit (32 × 18 cells) is drawn:
+
+| Hold | Moving the PiP | Dragging a corner |
+| --- | --- | --- |
+| **Shift** | along one axis only (the one you move more), its nearest edge or centre snapped to a grid line | along one axis only, snapped to a grid line |
+| **Alt** | freely, snapped on both axes | to the nearest grid point |
+
+Shift and Alt apply the moment you press or release them. Esc during a drag
+puts the PiP back.
 
 The mouse wheel changes a number box while it has the focus (click it
 first); Ctrl + wheel steps ten times as far.

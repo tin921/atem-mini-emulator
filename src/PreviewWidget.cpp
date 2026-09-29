@@ -11,9 +11,9 @@ constexpr double kGrab = 7;         // how close to a corner grabs it
 constexpr double kMinSize = 0.05;   // the window's size range, 5-200%
 constexpr double kMaxSize = 2.0;
 constexpr double kMaxPos = 200.0;   // the position boxes' range
-// The grid: 16 x 9 cells of 2 x 2 switcher units (80 px at 1280 x 720),
-// plus the centre lines. Includes the frame edges.
-constexpr int kColumns = 16, kRows = 9;
+// The grid: 32 x 18 cells of one switcher unit (40 px at 1280 x 720), so the
+// frame edges and the centre lines are grid lines.
+constexpr int kColumns = 32, kRows = 18;
 } // namespace
 
 PreviewWidget::PreviewWidget(QWidget* parent)
@@ -134,10 +134,13 @@ void PreviewWidget::paintEvent(QPaintEvent*)
     p.setFont(QFont("Arial", 9, QFont::Bold));
     p.drawText(dst.adjusted(4, 4, 0, 0), Qt::AlignTop | Qt::AlignLeft, "PROGRAM OUTPUT");
 
-    // The grid, the PiP's outline and corner handles: only in this preview
-    // (never in the virtual camera's picture).
-    if (!interactive() || (!m_hover && m_drag == Part::None)) return;
-    if (m_drag != Part::None) paintGrid(p);
+    // The grid, the axes, the PiP's outline and corner handles: only in this
+    // preview (never in the virtual camera's picture).
+    const bool dragging = m_drag != Part::None || m_showGuides;
+    if (!m_hover && !dragging) return;
+    if (dragging) paintGrid(p);
+    paintAxes(p);
+    if (!interactive()) return;
     QPolygonF c = corners(m_geo);
     for (QPointF& pt : c) pt = toWidget(pt);
     p.setRenderHint(QPainter::Antialiasing);
@@ -162,7 +165,8 @@ void PreviewWidget::mousePressEvent(QMouseEvent* e)
     m_drag = part;
     m_pressFrame = toFrame(e->position());
     m_lastPos = e->position();
-    m_snap = e->modifiers() & Qt::ShiftModifier;
+    m_oneAxis = e->modifiers() & Qt::ShiftModifier;
+    m_snapBoth = e->modifiers() & Qt::AltModifier;
     m_startPip = m_pip;
     m_startGeo = m_geo;
     updateCursor(part);
@@ -174,7 +178,8 @@ void PreviewWidget::mouseMoveEvent(QMouseEvent* e)
     m_hover = true;
     if (m_drag != Part::None) {
         m_lastPos = e->position();
-        m_snap = e->modifiers() & Qt::ShiftModifier;
+        m_oneAxis = e->modifiers() & Qt::ShiftModifier;
+        m_snapBoth = e->modifiers() & Qt::AltModifier;
         dragTo(m_lastPos);
         update();
         return;
@@ -193,12 +198,12 @@ void PreviewWidget::mouseReleaseEvent(QMouseEvent* e)
     emit pipEditFinished(resized);
 }
 
-// Esc during a drag puts the PiP back where it was; Shift snaps (or stops
-// snapping) at once, without waiting for the mouse to move.
+// Esc during a drag puts the PiP back where it was; Shift and Alt take
+// effect at once, without waiting for the mouse to move.
 void PreviewWidget::keyPressEvent(QKeyEvent* e)
 {
-    if (e->key() == Qt::Key_Shift && m_drag != Part::None) {
-        m_snap = true;
+    if ((e->key() == Qt::Key_Shift || e->key() == Qt::Key_Alt) && m_drag != Part::None) {
+        (e->key() == Qt::Key_Shift ? m_oneAxis : m_snapBoth) = true;
         dragTo(m_lastPos);
         update();
         return;
@@ -213,8 +218,11 @@ void PreviewWidget::keyPressEvent(QKeyEvent* e)
 
 void PreviewWidget::keyReleaseEvent(QKeyEvent* e)
 {
-    if (e->key() != Qt::Key_Shift || m_drag == Part::None) { QWidget::keyReleaseEvent(e); return; }
-    m_snap = false;
+    if ((e->key() != Qt::Key_Shift && e->key() != Qt::Key_Alt) || m_drag == Part::None) {
+        QWidget::keyReleaseEvent(e);
+        return;
+    }
+    (e->key() == Qt::Key_Shift ? m_oneAxis : m_snapBoth) = false;
     dragTo(m_lastPos);
     update();
 }
@@ -231,15 +239,20 @@ void PreviewWidget::dragTo(const QPointF& widgetPos)
     const PipGeometry& g = m_startGeo;
     const double sizeX0 = m_startPip.sizeX / 1000.0, sizeY0 = m_startPip.sizeY / 1000.0;
 
+    // Shift: along one axis only (the one moved more), snapped on it.
+    // Alt: snapped on both axes. (Pixels are square: 40 px per unit.)
+    QPointF delta = at - m_pressFrame;
+    const bool alongX = std::abs(delta.x()) >= std::abs(delta.y());
+    if (m_oneAxis) (alongX ? delta.ry() : delta.rx()) = 0;
+    const bool snapX = m_snapBoth || (m_oneAxis && alongX);
+    const bool snapY = m_snapBoth || (m_oneAxis && !alongX);
+
     if (m_drag == Part::Body) {
-        QPointF delta = at - m_pressFrame;
-        if (m_snap) {
-            // The nearest of the PiP's edges and centre goes onto a grid line
-            // (for a turned PiP, its bounding box's).
-            QRectF r = rotation(g).map(QPolygonF(g.visible)).boundingRect().translated(delta);
-            delta += QPointF(snapShift({ r.left(), r.center().x(), r.right() }, Qt::Horizontal),
-                             snapShift({ r.top(), r.center().y(), r.bottom() }, Qt::Vertical));
-        }
+        // The nearest of the PiP's edges and centre goes onto a grid line
+        // (for a turned PiP, its bounding box's).
+        QRectF r = rotation(g).map(QPolygonF(g.visible)).boundingRect().translated(delta);
+        if (snapX) delta.rx() += snapShift({ r.left(), r.center().x(), r.right() }, Qt::Horizontal);
+        if (snapY) delta.ry() += snapShift({ r.top(), r.center().y(), r.bottom() }, Qt::Vertical);
         emitGeometry(g.box.center() + delta, sizeX0, sizeY0, false);
         return;
     }
@@ -248,20 +261,27 @@ void PreviewWidget::dragTo(const QPointF& widgetPos)
     // (unrotated) coordinates, then turned back into the frame.
     const QSizeF frame = frameSize();
     const QTransform turn = rotation(g);
-    // Snapping puts the dragged corner on the nearest grid point.
-    const QPointF corner = m_snap ? at + QPointF(snapShift({ at.x() }, Qt::Horizontal),
-                                                 snapShift({ at.y() }, Qt::Vertical)) : at;
-    const QPointF local = turn.inverted().map(corner);
     const bool right = m_drag == Part::TopRight || m_drag == Part::BottomRight;
     const bool bottom = m_drag == Part::BottomLeft || m_drag == Part::BottomRight;
     const QPointF anchor(right ? g.visible.left() : g.visible.right(),
                          bottom ? g.visible.top() : g.visible.bottom());
+    const QPointF startCorner(right ? g.visible.right() : g.visible.left(),
+                              bottom ? g.visible.bottom() : g.visible.top());
+    // The corner follows the mouse (keeping where it was grabbed); snapping
+    // puts it on a grid line.
+    QPointF corner = turn.map(startCorner) + delta;
+    if (snapX) corner.rx() += snapShift({ corner.x() }, Qt::Horizontal);
+    if (snapY) corner.ry() += snapShift({ corner.y() }, Qt::Vertical);
+    const QPointF local = turn.inverted().map(corner);
     const double fw = 1 - g.ml - g.mr, fh = 1 - g.mt - g.mb;   // the mask keeps these shares
 
     double sizeX = (right ? local.x() - anchor.x() : anchor.x() - local.x()) / fw / frame.width();
     double sizeY = (bottom ? local.y() - anchor.y() : anchor.y() - local.y()) / fh / frame.height();
     if (m_lockAspect) {
-        double s = qMax(sizeX / sizeX0, sizeY / sizeY0);
+        // The axis the corner moved more along sets the size.
+        const QPointF moved = local - startCorner;
+        double s = std::abs(moved.x()) / frame.width() >= std::abs(moved.y()) / frame.height()
+                 ? sizeX / sizeX0 : sizeY / sizeY0;
         s = qBound(kMinSize / qMin(sizeX0, sizeY0), s, kMaxSize / qMax(sizeX0, sizeY0));
         sizeX = sizeX0 * s;
         sizeY = sizeY0 * s;
@@ -298,7 +318,6 @@ QList<double> PreviewWidget::gridLines(Qt::Orientation o) const
     const int cells = o == Qt::Horizontal ? kColumns : kRows;
     QList<double> lines;
     for (int i = 0; i <= cells; ++i) lines.append(length * i / cells);
-    if (cells % 2) lines.append(length / 2);    // 9 rows: the centre is between lines
     return lines;
 }
 
@@ -319,20 +338,72 @@ double PreviewWidget::snapShift(const QList<double>& edges, Qt::Orientation o) c
 void PreviewWidget::paintGrid(QPainter& p) const
 {
     p.save();
-    QRectF r = frameRect();
-    const QColor line(255, 255, 255, m_snap ? 70 : 35);
-    const QColor centre(255, 255, 255, m_snap ? 130 : 70);
-    auto draw = [&](Qt::Orientation o) {
-        const double length = o == Qt::Horizontal ? frameSize().width() : frameSize().height();
-        for (double at : gridLines(o)) {
-            const bool mid = qFuzzyCompare(at, length / 2);
-            p.setPen(QPen(mid ? centre : line, 1, mid ? Qt::DashLine : Qt::SolidLine));
-            QPointF w = toWidget(o == Qt::Horizontal ? QPointF(at, 0) : QPointF(0, at));
-            if (o == Qt::Horizontal) p.drawLine(QPointF(w.x(), r.top()), QPointF(w.x(), r.bottom()));
-            else                     p.drawLine(QPointF(r.left(), w.y()), QPointF(r.right(), w.y()));
-        }
+    const QRectF r = frameRect();
+    p.setPen(QPen(QColor(255, 255, 255, m_oneAxis || m_snapBoth ? 60 : 30), 1));
+    for (double at : gridLines(Qt::Horizontal)) {
+        const double x = toWidget(QPointF(at, 0)).x();
+        p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+    }
+    for (double at : gridLines(Qt::Vertical)) {
+        const double y = toWidget(QPointF(0, at)).y();
+        p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+    }
+    p.restore();
+}
+
+// The switcher's coordinates: X and Y axes through the origin (the frame's
+// centre), a tick per unit, and the edges (+-16, +-9) and halfway points
+// (+-8, +-4.5) marked with their values. +Y is up.
+void PreviewWidget::paintAxes(QPainter& p) const
+{
+    p.save();
+    const QRectF r = frameRect();
+    const QPointF o = r.center();
+    const double unit = r.width() / 32;     // widget pixels per switcher unit
+    const QColor ink(255, 255, 255, 170), shadow(0, 0, 0, 150);
+
+    auto line = [&](QPointF a, QPointF b) {
+        p.setPen(QPen(shadow, 3));
+        p.drawLine(a, b);
+        p.setPen(QPen(ink, 1));
+        p.drawLine(a, b);
     };
-    draw(Qt::Horizontal);
-    draw(Qt::Vertical);
+    line({ r.left(), o.y() }, { r.right(), o.y() });
+    line({ o.x(), r.top() }, { o.x(), r.bottom() });
+    for (int i = -16; i <= 16; ++i) {
+        const double len = i % 8 == 0 ? 5 : 2;
+        line({ o.x() + i * unit, o.y() - len }, { o.x() + i * unit, o.y() + len });
+    }
+    for (int j = -9; j <= 9; ++j) {
+        const double len = j == 9 || j == -9 ? 5 : 2;
+        line({ o.x() - len, o.y() - j * unit }, { o.x() + len, o.y() - j * unit });
+    }
+    for (double j : { -4.5, 4.5 })
+        line({ o.x() - 5, o.y() - j * unit }, { o.x() + 5, o.y() - j * unit });
+
+    QFont f = font();
+    f.setPointSizeF(7);
+    p.setFont(f);
+    auto label = [&](const QString& text, QPointF at, Qt::Alignment a) {
+        QRectF box(at.x() - 40, at.y() - 10, 80, 20);
+        if (a & Qt::AlignLeft) box.moveLeft(at.x());
+        if (a & Qt::AlignRight) box.moveRight(at.x());
+        if (a & Qt::AlignTop) box.moveTop(at.y());
+        if (a & Qt::AlignBottom) box.moveBottom(at.y());
+        p.setPen(shadow);
+        p.drawText(box.translated(1, 1), a, text);
+        p.setPen(ink);
+        p.drawText(box, a, text);
+    };
+    const double below = o.y() + 6, beside = o.x() + 7;
+    label("0", { o.x() + 4, o.y() + 4 }, Qt::AlignLeft | Qt::AlignTop);
+    label("-16", { r.left() + 3, below }, Qt::AlignLeft | Qt::AlignTop);
+    label("16", { r.right() - 3, below }, Qt::AlignRight | Qt::AlignTop);
+    label("-8", { o.x() - 8 * unit, below }, Qt::AlignHCenter | Qt::AlignTop);
+    label("8", { o.x() + 8 * unit, below }, Qt::AlignHCenter | Qt::AlignTop);
+    label("9", { beside, r.top() + 2 }, Qt::AlignLeft | Qt::AlignTop);
+    label("-9", { beside, r.bottom() - 2 }, Qt::AlignLeft | Qt::AlignBottom);
+    label("4.5", { beside, o.y() - 4.5 * unit }, Qt::AlignLeft | Qt::AlignVCenter);
+    label("-4.5", { beside, o.y() + 4.5 * unit }, Qt::AlignLeft | Qt::AlignVCenter);
     p.restore();
 }

@@ -36,6 +36,9 @@ public:
     ~MainWindow() override;
 
     bool isReady() const { return m_ready; }
+    // --screenshot: run this macro slot (0-based, -1: none), select it, and
+    // show the preview's guides.
+    void prepareScreenshot(int macroSlot);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
