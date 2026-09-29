@@ -220,10 +220,8 @@ IBMDSwitcherKeyPatternParameters::SetSize
 IBMDSwitcherKeyPatternParameters::SetSoftness
 IBMDSwitcherKeyPatternParameters::SetSymmetry
 IBMDSwitcherKeyPatternParameters::SetVerticalOffset
-IBMDSwitcherMediaPool::Clear
 IBMDSwitcherMixEffectBlock::SetFadeToBlackFullyBlack
 IBMDSwitcherMixEffectBlock::SetTallyConfig
-IBMDSwitcherStillCapture::CaptureStill
 IBMDSwitcherTransitionDVEParameters::GetClip
 IBMDSwitcherTransitionDVEParameters::GetEnableKey
 IBMDSwitcherTransitionDVEParameters::GetFlipFlop
