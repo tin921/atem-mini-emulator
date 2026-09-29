@@ -1,200 +1,108 @@
 # ATEM Mini Emulator
 
-A Windows desktop application that emulates a Blackmagic ATEM Mini video
-switcher on UDP port 9910. Software that talks to an ATEM through
-Blackmagic's switcher SDK (BMDSwitcherAPI) connects to it as if it were the
-real device, so you can develop, test and demonstrate ATEM-connected software —
-including the companion [obs-atem](https://github.com/tin921/obs-atem) OBS
-Studio plugin — without a physical switcher.
+A Windows app that behaves like a Blackmagic **ATEM Mini** video switcher on
+the network. Software that talks to an ATEM through Blackmagic's switcher SDK
+(BMDSwitcherAPI) connects to it as if it were the real device — so you can
+develop, test and demonstrate ATEM software, such as the
+[obs-atem](https://github.com/tin921/obs-atem) OBS plugin, without a switcher
+on the desk.
 
-![The emulator app](docs/emulator.png)
+And because Blackmagic publishes the SDK but not the protocol under it, the
+repository also holds the tool that worked the protocol out: **atem-sweep**,
+which records how a real ATEM Mini answers every safe SDK function and checks
+the emulator against those recordings.
 
----
+![The emulator: program output with the PiP being placed, the switcher's controls and macro pool](docs/emulator.png)
 
-## What it does
-
-| Capability | Details |
-| --- | --- |
-| ATEM Mini protocol | The real device's handshake, its full startup state (364 fields), acknowledgements and resends, answers once per video frame; about 90 commands with the device's own checks, clamps and quirks, including macro and still transfers |
-| Source switching | Program bus: Black, Camera 1–4, Color Bars (plus the colour generators and media player inputs from clients) |
-| Picture-in-Picture | Upstream key 1 as a DVE key, like the ATEM Mini: size, position, border, border colour, crop |
-| Transitions | Cut, auto transition, T-bar and fade to black run frame by frame (1080p24) |
-| Input sources | Per camera: solid colour, still image or looping video file |
-| Macro pool | The switcher's 100 slots: record in ATEM Software Control or through the SDK, or **Save Output** here; run with pauses, user waits and loop; rename; delete; upload and download |
-| Live preview | 640×360 program picture at 30 fps (QPainter, no GPU) |
-| Virtual camera | A DirectShow webcam — "ATEM Mini Emulator" in OBS, Zoom, the Camera app |
-| Protocol log | Connections and every command received, in the window |
-| Several clients | Every change reaches every connected client |
-
-How faithful it is: the switcher behind the window was rebuilt from
-recordings of a real ATEM Mini, and it is checked against them — 1,881 tests
-of every safe SDK function the Mini has (see
-[How it was built](#how-it-was-built)).
+```text
+ TEST WITHOUT THE DEVICE
+   your software ──── Blackmagic SDK, UDP 9910 ────► ATEM Mini Emulator
+   (obs-atem, SDK apps)                              window · program picture · virtual webcam
+                                                     core: the switcher's protocol, state, rules
+                                                                      ▲
+ MAKE SURE IT ANSWERS LIKE THE DEVICE                                 │ rules written from the
+   record:  atem-sweep ─► SDK ─► recording proxy ─► real ATEM Mini    │ recordings; every answer
+   verify:  atem-sweep ─► SDK ─► recording proxy ─► emulator ─────────┘ compared with the device's
+                                 (every packet, both ways)
+```
 
 ---
 
-## Quick start
+## Test ATEM software without an ATEM
+
+The emulator starts with the exact state a real ATEM Mini sends a new client
+(364 fields), handles about 90 commands with the device's own checks, clamps
+and quirks, and answers once per video frame like the device. In the window:
+
+- **Program bus** — Black, Camera 1–4, Color Bars; cut, auto transition,
+  T-bar and fade to black, frame by frame.
+- **Picture-in-picture** — upstream key 1 as a DVE key, like the Mini: drag
+  and resize it on the program picture (with the switcher's axes, a grid and
+  snapping), or type size, position, border and crop.
+- **Macros** — the switcher's 100 slots: record them in ATEM Software
+  Control, through the SDK, or with **Save Output**; run, loop, rename,
+  upload and download.
+- **Cameras** — each a colour, a still image or a looping video.
+- **Virtual webcam** — the program picture as "ATEM Mini Emulator" in OBS,
+  Zoom or the Camera app.
+- **Several clients** at once, every change sent to all of them, and a log
+  of every command received.
+
+Build and run (Windows, Visual Studio 2022, Qt 6 with Multimedia):
 
 ```powershell
-# Build (Developer PowerShell for VS 2022). Qt needs the Multimedia module.
-cd D:\cemc-sr\atem-emulator
-cmake -B build-gui -G "Visual Studio 17 2022" -A x64 `
-    -DQt6_DIR="D:/ProgramFiles/Qt/6.11.1/msvc2022_64/lib/cmake/Qt6"
+cmake -B build-gui -G "Visual Studio 17 2022" -A x64 -DQt6_DIR="<Qt>/msvc2022_64/lib/cmake/Qt6"
 cmake --build build-gui --config Release
-
-# Run
 build-gui\Release\atem-emulator.exe
 ```
 
-It listens on **UDP 0.0.0.0:9910** at start. Options:
+Then connect your software to `127.0.0.1` (the obs-atem plugin: ⚙ → Manual
+IP; the SDK: `ConnectTo("127.0.0.1")`). One thing to know: when nothing
+answers at an address, the SDK quietly falls back to an ATEM on the PC's USB.
 
-| Option | Meaning |
-| --- | --- |
-| `--listen ADDRESS` | Listen on one address only, e.g. `127.0.0.2` |
-| `--profile DIR` | Emulate another recorded switcher (default `profiles/atem-mini_proto2.30`; also `atem-mini_proto2.30_2026-09-28`) |
-| `--reference` | Start exactly as recorded: saved macros are not loaded or saved (for checks against the recordings) |
-| `--screenshot FILE [--macro N]` | For documentation: run macro N, show the preview's axes and grid, save the window to FILE and exit |
-
-The build also makes `atem-emu.exe`, the same switcher without a window
-([core/](core)). Build details: [docs/overview.md](docs/overview.md#build).
+**More:** [docs/emulator.md](docs/emulator.md) — options, connecting
+clients, every control in the window, macros, the virtual camera.
 
 ---
 
-## Connecting clients
+## Make sure it answers like the real ATEM
 
-### obs-atem plugin
+The emulator is only useful if it answers like the device. atem-sweep drives
+a switcher through the Blackmagic SDK — every safe function the ATEM Mini
+has, with good and bad input — through a **recording proxy** that captures
+every packet both ways:
 
-In the panel settings (⚙), connect to **Manual IP** → `127.0.0.1`.
+- against the **real ATEM** it makes a *golden record*: what the SDK
+  reported and the switcher's exact bytes;
+- against the **emulator** it runs the same tests and compares every answer
+  with the golden record.
 
-### BMDSwitcherAPI (C++ / COM SDK)
+![atem-sweep in a console, through its recording proxy](docs/sweep-cli.png)
 
-```cpp
-IBMDSwitcherDiscovery* disc;
-CoCreateInstance(__uuidof(CBMDSwitcherDiscovery), nullptr, CLSCTX_ALL,
-                 __uuidof(IBMDSwitcherDiscovery), (void**)&disc);
+The same sweep runs in a window, every test a square coloured as it runs.
+Against the real ATEM it backs up the switcher first, puts every setting
+back, restores the stored macros and stills and checks they're identical.
 
-BMDSwitcherConnectToFailure fail;
-IBMDSwitcher* sw;
-disc->ConnectTo(_bstr_t(L"127.0.0.1"), &sw, &fail);
-```
+![atem-sweep-gui: the coverage map, grouped by test group, and the drill-down list](docs/sweep-gui.png)
 
-If nothing answers at the address, the SDK falls back to an ATEM on this PC's
-USB: with a real ATEM plugged in, a wrong address connects to that instead.
+Where it stands (2026-09-29): 1,881 tests; the emulator matches the real
+ATEM Mini in 1,858, and the rest are tests changed since the recording. Of
+the SDK's 1,264 methods, 630 are recorded, emulated and verified, 534 don't
+exist on the Mini, 5 are never called (they can't be undone), and 70 need a
+HyperDeck or a Blackmagic camera — which this project doesn't have.
 
-### ATEM Software Control (official app)
+**More:**
 
-**File → Connection → Manual IP Address** `127.0.0.1` → **Connect**. Not yet
-verified end to end: the next step is to record what it sends (see
-[Capturing another client](sweep/README.md#capturing-another-client)).
-
----
-
-## Using the window
-
-Everything in the window goes through the same command handlers as the
-SDK's commands, so the window, SDK clients such as the OBS plugin and every
-other connected client show the same state.
-
-### Program bus
-
-Six source buttons across the top; click one to switch Program. The selected
-one has a white bar along its top edge. Labels follow the switcher's input
-names when they are renamed (e.g. in ATEM Software Control).
-
-### Picture-in-Picture (DVE)
-
-Click a **Fill** button to show that source as the PiP (the key becomes a DVE
-key and goes on air); click the lit one again to take the PiP off air.
-
-On the program picture, drag the PiP to move it, or drag one of its corner
-handles to resize it; the opposite corner stays put, and **Lock** keeps the
-proportions (the axis you drag along more sets the size). While the mouse is
-over the picture it shows the switcher's axes: the origin 0 in the centre,
-+Y up, a tick per unit, the edges (±16, ±9) and halfway points (±8, ±4.5)
-labelled. While you drag, a grid of one unit (32 × 18 cells) is drawn:
-
-| Hold | Moving the PiP | Dragging a corner |
-| --- | --- | --- |
-| **Shift** | along one axis only (the one you move more), its nearest edge or centre snapped to a grid line | along one axis only, snapped to a grid line |
-| **Alt** | freely, snapped on both axes | to the nearest grid point |
-
-Shift and Alt apply the moment you press or release them. Esc during a drag
-puts the PiP back.
-
-The mouse wheel changes a number box while it has the focus (click it
-first); Ctrl + wheel steps ten times as far.
-
-| Control | Range | Sent to the switcher as |
-| --- | --- | --- |
-| Size X / Size Y | 5–200% | DVE size 0.05–2.0 (Lock keeps X and Y equal) |
-| Position X / Y | ±200.00, steps of 0.1 | DVE position in the switcher's units, as ATEM Software Control shows it: ±16 / ±9 are the frame edges, +Y up; beyond that the PiP is (partly) off screen |
-| Border width | 0–50 px | DVE border outer width 0–16, border on when > 0 |
-| Border color | picker | DVE border hue / saturation / luma |
-| Crop L/R/T/B | 0–50% | DVE mask (left/right of 32, top/bottom of 18), on while any edge > 0 |
-| Rotation, Opacity | 0–359°, 0–100% | Not sent: an ATEM Mini can't rotate or fade a key; they only change the emulator's picture |
-
-### Input sources
-
-For each of the four cameras: **Color** (a solid fill; click the swatch),
-**Photo** (a still image) or **Video** (a looping `.mp4` / `.mov` / `.mkv` …).
-
-### Macros
-
-The list is the switcher's macro pool (100 slots). Macros recorded in ATEM
-Software Control or through the SDK appear here, and macros made here appear
-there.
-
-- **Save Output** stores the current picture in the selected slot as switcher
-  commands (program, PiP source, DVE settings, PiP on/off), plus this
-  emulator's camera pictures, size lock, rotation and opacity.
-- **▶ Play** runs the selected macro (**■ Stop** while one runs).
-- **Update** renames / re-describes the slot.
-- **Saved State** lists the macro's steps.
-
-Macros are saved in `%LOCALAPPDATA%\CEMC\ATEM Emulator\macros.json` (a file
-from the earlier version is converted on first start and kept as
-`macros-v1.json`). Until something is saved there, the pool holds the macros
-recorded from the real ATEM Mini with the profile.
-
-### Virtual camera
-
-**Virtual Camera ON** registers `AtemVirtualCam.dll` (under HKCU, no admin)
-and streams the program picture; it appears as **"ATEM Mini Emulator"** in
-OBS, Zoom, the Windows Camera app and any DirectShow application.
-
-### Network
-
-**Network ON/OFF** starts or stops the UDP server. It starts at launch, on
-`0.0.0.0:9910` unless `--listen` says otherwise.
-
----
-
-## How it was built
-
-Blackmagic publishes the SDK, not the network protocol underneath it, and no
-emulator. So the emulator was rebuilt from recordings of the real switcher,
-made with **[atem-sweep](sweep)**: a test client that drives the real ATEM
-through the SDK — every safe function, good and bad input — with a
-**recording proxy** in the middle that captures every packet both ways. The
-same tests then run against the emulator, and each answer is compared with
-the real device's.
-
-```text
-record:  atem-sweep ─► SDK ─► recording proxy ─► real ATEM Mini
-verify:  atem-sweep ─► SDK ─► recording proxy ─► emulator
-                              (every packet, both ways)
-```
-
-The sweep runs from the command line or its own window, which shows every
-test as a square, coloured as it runs.
-
-- **[sweep/README.md](sweep/README.md)** — the sweep, the proxy, recording
-  safely (backups), the golden records, coverage, and the workflow from a
-  recording to emulator code.
-- **[docs/core.md](docs/core.md)** — the emulator core: protocol, state,
-  command handlers, the rules the recordings showed, and its limits.
-- **[docs/overview.md](docs/overview.md)** — how the pieces fit, the workflow,
-  and how an AI coding agent turns the recordings into emulator code.
+- [docs/sweep.md](docs/sweep.md) — how the sweep and the proxy work, safety,
+  running it (console and window), capturing another client, backups.
+- [docs/sdk-functions.md](docs/sdk-functions.md) — every SDK function's
+  coverage, the test groups, the hardware and excluded functions, the golden
+  records, what a verification compares.
+- [docs/core.md](docs/core.md) — the emulator core: protocol, state, the
+  rules the recordings showed, and its limits.
+- [docs/overview.md](docs/overview.md) — how the pieces fit, the workflow
+  from recording to emulator code (written with an AI coding agent), the
+  app's architecture and the build.
 
 ---
 
@@ -202,16 +110,17 @@ test as a square, coloured as it runs.
 
 | Folder | What |
 | --- | --- |
-| [src/](src) | The emulator app: window, picture, virtual camera ([docs/overview.md](docs/overview.md#the-apps-architecture)) |
-| [core/](core) | The switcher itself, shared by the app and `atem-emu.exe` |
-| [sweep/](sweep) | atem-sweep and atem-sweep-gui: record the real ATEM, verify the emulator |
+| [src/](src) | The emulator app: window, picture, virtual camera |
+| [core/](core) | The switcher itself, shared by the app and `atem-emu.exe` (the same switcher with a console) |
+| [sweep/](sweep) | atem-sweep and atem-sweep-gui, the golden records and the coverage lists |
+| [docs/](docs) | The guides above |
 
 ## Related projects
 
 | Project | Role |
 | --- | --- |
 | [obs-atem](https://github.com/tin921/obs-atem) | OBS Studio plugin — macro, PiP and Views panels; connects to a real ATEM or this emulator |
-| ATEM Software Control | Blackmagic's app; with this emulator not yet verified |
+| ATEM Software Control | Blackmagic's app; against this emulator not verified yet |
 | BMDSwitcherAPI SDK | Blackmagic's COM SDK, used by obs-atem and atem-sweep |
 
 ## License

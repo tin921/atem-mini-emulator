@@ -1,6 +1,7 @@
 # SDK functions the ATEM Mini has and that are safe to call, but that need
-# hardware the test setup doesn't have: without it the switcher only answers
-# "nothing connected", so a recording would not show the real behaviour.
+# hardware this project doesn't have (no HyperDeck, no Blackmagic camera):
+# without it the switcher only answers "nothing connected", so a recording
+# would not show the real behaviour. See docs/sdk-functions.md, Hardware.
 # Interface or Interface::Method<TAB>hardware needed
 # When the hardware is connected, remove the line: the methods become sweep
 # targets (category 3). categories.py counts these as "needs hardware".

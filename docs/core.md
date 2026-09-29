@@ -2,13 +2,13 @@
 
 The switcher itself: the ATEM Mini's network protocol, its state and its
 behaviour, rebuilt from recordings of the real device made with
-[atem-sweep](../sweep/README.md). No video — the emulator app ([../src](../src),
+[atem-sweep](sweep.md). No video — the emulator app ([../src](../src),
 `atem-emulator.exe`) runs on this core and adds the window, picture and
 virtual camera; `atem-emu.exe` is the same core with a console instead.
 
 | Check against the real ATEM's golden records | Result |
 |---|---|
-| full sweep (2026-09-28), 1,881 tests | 1,858 same, 6 differ, 17 skipped (2026-09-29); none of the six is left in the emulator, see [sweep/README.md](../sweep/README.md#golden-records) |
+| full sweep (2026-09-28), 1,881 tests | 1,858 same, 6 differ, 17 skipped (2026-09-29); none of the six is left in the emulator, see [sdk-functions.md](sdk-functions.md#golden-records) |
 | original record (2026-09-26), 273 tests | 267 same; the other 6 are sweep tests changed since |
 
 ## Run
@@ -23,7 +23,7 @@ atem-emu --verbose                     # log every command and answer
 
 Connect anything that talks to an ATEM through the SDK (the obs-atem plugin,
 `atem-cli --ip`, atem-sweep) to this PC's address. Check it against the real
-switcher (from `core/`; more in [sweep/README.md](../sweep/README.md)):
+switcher (from `core/`; more in [sweep.md](sweep.md)):
 
 ```powershell
 atem-emu --listen 127.0.0.2 --profile profiles\atem-mini_proto2.30_2026-09-28
@@ -171,8 +171,8 @@ Unknown commands are acknowledged and logged as unhandled.
 ## Limits
 
 - It emulates what atem-sweep records. Not yet: audio level meters
-  (`SFLN` → `FMLv` / `FDLv`), camera control and HyperDecks (need the hardware
-  to record, see [sweep/README.md](../sweep/README.md#hardware)). Recording and
+  (`SFLN` → `FMLv` / `FDLv`), camera control and HyperDecks (they need hardware this
+  project doesn't have, see [sdk-functions.md](sdk-functions.md#hardware)). Recording and
   streaming don't exist on the base ATEM Mini.
 - ATEM Software Control against the emulator is not verified yet.
 - The transport assumes a well-behaved client on a clean network: packets

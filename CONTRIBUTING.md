@@ -6,6 +6,8 @@ Contributions are welcome. Please read this before opening a pull request.
 
 - Bug fixes with a clear reproduction case
 - Protocol accuracy improvements (backed by a real-device recording)
+- HyperDeck or Blackmagic camera support, recorded on the real hardware
+  (the project has neither; see [docs/sdk-functions.md](docs/sdk-functions.md#hardware))
 - New ATEM commands in the core: a setter-table entry
   (`core/tools/setters_spec.py`) or a handler in `core/src/device.cpp`
 - Virtual camera compatibility improvements
@@ -22,7 +24,7 @@ Contributions are welcome. Please read this before opening a pull request.
 2. Build the project following [docs/overview.md](docs/overview.md#build)
 3. Make your change on a feature branch
 4. Run the conformance check (`atem-sweep 127.0.0.2 --verify ...`, see
-   [sweep/README.md](sweep/README.md)) and test with the `obs-atem` plugin
+   [docs/sweep.md](docs/sweep.md)) and test with the `obs-atem` plugin
    and/or ATEM Software Control
 5. Open a pull request describing what changed and why
 
@@ -38,7 +40,7 @@ Contributions are welcome. Please read this before opening a pull request.
 If your contribution changes emulator behavior, include the evidence from the
 real switcher: the atem-sweep test and the recorded packets (`wire.jsonl`)
 that show it. Never change a golden record to make a test pass. See
-[sweep/README.md](sweep/README.md) for recording and the workflow.
+[docs/sweep.md](docs/sweep.md) for recording and the workflow.
 
 ## License
 

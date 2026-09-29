@@ -15,8 +15,8 @@ rather than calls) gets exactly one category, in this order:
     3 sweep        every other method the ATEM Mini has and that is safe
                    (2 and 3 say whether a --record run already recorded
                    them on the real ATEM: then only the emulator is to do)
-    4 hardware     needs-hardware.txt: needs hardware the test setup lacks
-                   (a HyperDeck, a Blackmagic camera); not a sweep target yet
+    4 hardware     needs-hardware.txt: needs hardware this project doesn't
+                   have (a HyperDeck, a Blackmagic camera); not a sweep target
   unsupported (never sweep targets)
     5 not on mini  not-on-mini.txt (recorded by the probe)
     6 destructive  excluded.txt (can't be undone, e.g. the startup state),
@@ -126,7 +126,7 @@ def main():
            f'  3 sweep       {counts.get("3 sweep", 0):5}   other safe ATEM Mini functions, not yet emulated',
            f'                       (2 + 3: {todo.get("recorded", 0)} recorded, emulator to do; '
            f'{todo.get("not recorded", 0)} not recorded yet)',
-           f'  4 hardware    {counts.get("4 hardware", 0):5}   need hardware the test setup lacks (HyperDeck, Blackmagic camera)',
+           f'  4 hardware    {counts.get("4 hardware", 0):5}   need hardware this project lacks (HyperDeck, Blackmagic camera)',
            f'unsupported  {len(unsupported):5}',
            f'  5 not on mini {counts.get("5 not on mini", 0):5}   recorded by the probe on the real ATEM',
            f'  6 destructive {counts.get("6 destructive", 0):5}   can\'t be undone (startup state, video mode, recording)',

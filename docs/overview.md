@@ -22,9 +22,9 @@ where an AI coding agent does the work — plus the tech stack and build.
 
 | Piece | What it is | Guide |
 |---|---|---|
-| `src/` → `atem-emulator.exe` | The desktop app: window, program picture, virtual camera | [../README.md](../README.md) |
+| `src/` → `atem-emulator.exe` | The desktop app: window, program picture, virtual camera | [emulator.md](emulator.md) |
 | `core/` → `atem-emu.exe` + a library | The switcher: protocol, state, behaviour; the app runs on it | [core.md](core.md) |
-| `sweep/` → `atem-sweep.exe`, `atem-sweep-gui.exe` | Records the real ATEM through the SDK and a proxy; checks the emulator against the recordings | [../sweep/README.md](../sweep/README.md) |
+| `sweep/` → `atem-sweep.exe`, `atem-sweep-gui.exe` | Records the real ATEM through the SDK and a proxy; checks the emulator against the recordings | [sweep.md](sweep.md), [sdk-functions.md](sdk-functions.md) |
 
 They share no code: what connects the sweep and the core is data — the
 golden records and the profiles made from them.
@@ -141,9 +141,9 @@ Examples from the current core, each read off the recordings:
 ### What still needs a person
 
 Recording the real switcher (and saying when nothing is live), connecting
-hardware the sweep can't fake (a HyperDeck, a Blackmagic camera — see
-[sweep/README.md](../sweep/README.md#hardware)), and deciding what is safe to
-exercise (the opt-ins, the excluded functions).
+hardware the sweep can't fake (a HyperDeck, a Blackmagic camera — this
+project has neither, see [sdk-functions.md](sdk-functions.md#hardware)), and
+deciding what is safe to exercise (the opt-ins, the excluded functions).
 
 ---
 

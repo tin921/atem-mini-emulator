@@ -7,7 +7,7 @@ supported      725
   2 samples        15   used by the SDK samples, not yet emulated
   3 sweep          10   other safe ATEM Mini functions, not yet emulated
                        (2 + 3: 24 recorded, emulator to do; 1 not recorded yet)
-  4 hardware       70   need hardware the test setup lacks (HyperDeck, Blackmagic camera)
+  4 hardware       70   need hardware this project lacks (HyperDeck, Blackmagic camera)
 unsupported    539
   5 not on mini   534   recorded by the probe on the real ATEM
   6 destructive     5   can't be undone (startup state, video mode, recording)
