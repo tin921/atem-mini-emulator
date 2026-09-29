@@ -42,6 +42,34 @@ emulator's traffic (`wire.jsonl`) for comparison with the real device's.
 
 ## How it works
 
+```text
+SDK clients (obs-atem, atem-sweep, ...)      emulator window (src/)
+      │ UDP 9910                                   │ emu::cmd builds the same
+      ▼                                            │ commands a client sends
+┌──────────────────────────────┐                   │
+│ Server (server.cpp)          │                   │
+│ handshake, acks, resends,    │                   │
+│ one session per client       │                   │
+└──────────────┬───────────────┘                   │
+               │ commands                          │
+               ▼                                   │
+┌──────────────────────────────┐                   │
+│ Device::apply (device.cpp)   │◄──────────────────┘
+│ one handler per command,     │
+│ the macro pool               │
+└──────────────┬───────────────┘
+               │ changes fields in place
+               ▼
+┌──────────────────────────────┐
+│ field store (fields.cpp)     │  starts as the connect dump
+│ the switcher's whole state   │  recorded from the real ATEM
+└──────────────┬───────────────┘  (profiles/)
+               │
+               ▼
+changed fields go back through the Server to every client;
+the window redraws from Device::view()
+```
+
 | File | Role |
 |---|---|
 | `src/server.*` | UDP transport: handshake, sessions, reliable packets, acknowledgements, resends, several clients |

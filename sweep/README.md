@@ -90,6 +90,20 @@ atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences
 | `macros/NN.bin` | each stored macro's bytes (`MacroPool::Download`) |
 | `stills/NN.raw` | each stored still's frame as the switcher sends it (the ATEM Mini: 10-bit YUVA, 1920×1080) |
 
+```text
+┌──────────┐    ┌──────────────────────┐    ┌──────────┐    ┌──────────┐    ┌──────────────┐
+│ backup A │───►│ tests: create, list, │───►│ backup B │───►│ restore  │───►│ backup C     │
+│          │    │ change, delete, ...  │    │          │    │ from A   │    │ compare C, A │
+└──────────┘    └──────────┬───────────┘    └──────────┘    └──────────┘    └──────────────┘
+ state, macros,            ▼                 what the tests  step 2: not     must be
+ stills          results.json, wire.jsonl    left behind     built yet       identical
+                 (the reverse-engineering
+                 data)
+```
+
+Backups A, B and C are only a safety net and a troubleshooting aid; the tests'
+recordings are the reverse-engineering data.
+
 Taking a backup only downloads; it never changes the switcher. A backup that
 misses anything says so (`"complete": false`, exit code 3). Backups go to
 `sweep/backups/`, which git ignores: they hold your stored macros and
@@ -165,6 +179,30 @@ Checks on the run itself:
 
 ### How recording works
 
+```text
+record: the real ATEM (Ethernet)
+
+┌────────────┐  SDK calls  ┌─────────────────┐  UDP 9910  ┌────────────────┐
+│ atem-sweep │────────────►│ recording proxy │───────────►│ real ATEM Mini │
+│ tests      │◄────────────│ 127.0.0.1:9910  │◄───────────│ 192.168.0.240  │
+└─────┬──────┘  responses  └────────┬────────┘            └────────────────┘
+      │         and events          │ every packet, both ways
+      ▼                             ▼
+results.json                    wire.jsonl
+per test: return codes,         every packet, split
+read-backs, SDK events          into ATEM fields
+
+verify: the emulator
+
+┌────────────┐             ┌─────────────────┐            ┌────────────────┐
+│ atem-sweep │────────────►│ recording proxy │───────────►│ atem-emu       │
+│ --verify   │◄────────────│ 127.0.0.1:9910  │◄───────────│ 127.0.0.2:9910 │
+└─────┬──────┘             └─────────────────┘            └────────────────┘
+      │ every test compared with the golden record
+      ▼
+269 passed, 0 failed, 4 skipped
+```
+
 Over Ethernet the SDK is pointed at a small UDP proxy on `127.0.0.1:9910`
 which forwards to the ATEM and keeps every packet. Each test therefore shows
 which command bytes an API call produced and which state fields the ATEM sent
@@ -195,9 +233,15 @@ python coverage\categories.py <verify run>\results.json   # also writes coverage
 
 "Not on mini" is *recorded* when the real ATEM refused the interface in a
 sweep run, and *expected* (400 of the 525) until a read-only probe on the
-real ATEM confirms it. "Hardware" methods become sweep targets (3) once that
-hardware is connected. Work moves methods from 3 (and 2) to 1: add sweep
-tests, record the real ATEM, extend the emulator core until verify passes.
+real ATEM confirms it. How methods move between categories:
+
+```text
+ 3 sweep, 2 samples ──add a sweep test, record the real ATEM──► recorded
+ recorded ──extend core/src/device.cpp until verify passes──► 1 emulator
+ 4 hardware ──connect the HyperDeck / Blackmagic camera──► 3 sweep
+ 5 not on mini (expected) ──read-only probe on the real ATEM──► 5 (recorded), or 3
+```
+
 
 ### Call tracking
 

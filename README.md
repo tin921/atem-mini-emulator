@@ -19,6 +19,34 @@ as the real device.
 
 ---
 
+## How it fits together
+
+```text
+┌────────────────┐           ┌──────────────────────┐
+│ real ATEM Mini │◄── SDK ───│ atem-sweep (record)  │  1. record: every SDK call, good and bad
+└────────────────┘           └──────────┬───────────┘     input, every response and packet
+                                        │ golden record
+                                        │ results.json, wire.jsonl
+                                        ▼
+                             ┌──────────────────────┐
+                             │ core/make_profile.py │  2. profile: the connect dump and
+                             └──────────┬───────────┘     the stored macros
+                                        ▼
+┌────────────────────┐       ┌──────────────────────┐
+│ atem-emulator.exe  │ uses  │ emulator core        │  3. emulate: the recorded state, one
+│ window, picture,   │──────►│ atem-emu.exe = the   │     handler per command (device.cpp)
+│ webcam, macros     │       │ core without window  │
+└────────────────────┘       └──────────▲───────────┘
+                                        │ UDP 9910, like a real ATEM
+                             ┌──────────┴───────────┐
+                             │ SDK clients          │  4. use and verify: obs-atem,
+                             │ obs-atem, atem-cli,  │     atem-cli, and atem-sweep --verify
+                             │ atem-sweep --verify  │     against the golden record
+                             └──────────────────────┘
+```
+
+---
+
 ## What it does
 
 | Capability | Details |
