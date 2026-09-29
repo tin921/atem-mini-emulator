@@ -8,8 +8,9 @@
 // Accepts a new frame via setFrame() and repaints.
 //
 // The PiP on it can be dragged to move it, and resized by its corner handles
-// (shown while the mouse is over the picture). The widget only reports the
-// new geometry; the window sends it to the switcher like any other change.
+// (shown while the mouse is over the picture). While dragging, a grid is
+// drawn; holding Shift snaps to it. The widget only reports the new
+// geometry; the window sends it to the switcher like any other change.
 
 class PreviewWidget : public QWidget
 {
@@ -40,6 +41,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void keyPressEvent(QKeyEvent*) override;
+    void keyReleaseEvent(QKeyEvent*) override;
     void leaveEvent(QEvent*) override;
 
 private:
@@ -55,6 +57,9 @@ private:
     Part partAt(const QPointF& widgetPos) const;
     void updateCursor(Part part);
     void dragTo(const QPointF& widgetPos);
+    QList<double> gridLines(Qt::Orientation o) const;   // frame pixels
+    double snapShift(const QList<double>& edges, Qt::Orientation o) const;
+    void paintGrid(QPainter& p) const;
     void emitGeometry(const QPointF& boxCentre, double sizeX, double sizeY, bool resized);
 
     QImage m_frame;
@@ -65,6 +70,8 @@ private:
 
     Part m_drag = Part::None;
     QPointF m_pressFrame;                     // where the drag started, frame pixels
+    QPointF m_lastPos;                        // the mouse during a drag, widget pixels
+    bool m_snap = false;                      // Shift held: snap to the grid
     Atem::KeDVState m_startPip;
     PipGeometry m_startGeo;
 };

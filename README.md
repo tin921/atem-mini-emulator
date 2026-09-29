@@ -107,8 +107,11 @@ key and goes on air); click the lit one again to take the PiP off air.
 
 On the program picture, drag the PiP to move it, or drag one of its corner
 handles (shown while the mouse is over the picture) to resize it; the
-opposite corner stays put, and **Lock** keeps the proportions. Esc during a
-drag puts it back.
+opposite corner stays put, and **Lock** keeps the proportions. While you
+drag, a grid of 2 × 2 units (16 × 9 cells, plus dashed centre lines) is
+drawn; hold **Shift** to snap to it — a moved PiP puts its nearest edge or
+centre on a line, a dragged corner lands on a grid point. Esc during a drag
+puts it back.
 
 The mouse wheel changes a number box while it has the focus (click it
 first); Ctrl + wheel steps ten times as far.
