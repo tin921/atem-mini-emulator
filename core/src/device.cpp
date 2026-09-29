@@ -927,11 +927,12 @@ void Device::registerHandlers() {
         const QByteArray* position = m_store.find("TrPs", key(u8(d, 1)));
         if (!style) return;
         bool inTransition = position && u8(*position, 1);
-        if ((mask & 0x01) && u8(d, 2) == kStyleDVE && m_dveOwner == DveOwner::Keyer) {
-            // A DVE key on air keeps the DVE: the style is refused (recorded: three warnings).
+        if ((mask & 0x01) && u8(d, 2) == kStyleDVE) {
+            // A DVE key in the next transition keeps the DVE: the style is
+            // refused (recorded: three warnings). Without the key in the
+            // selection the transition takes the DVE (below).
             const QByteArray* props = m_store.find("KeBP", key(0, 0));
-            const QByteArray* onAir = m_store.find("KeOn", key(0, 0));
-            if (props && u8(*props, 2) == kKeyTypeDVE && onAir && u8(*onAir, 2)) {
+            if (props && u8(*props, 2) == kKeyTypeDVE && (u8(*style, 4) & 0x02)) {
                 for (int i = 0; i < 3; ++i) warn("DVE unavailable");
                 return;
             }
@@ -1051,19 +1052,22 @@ void Device::registerHandlers() {
         QByteArray* dve = m_store.find("KeDV", key(u8(d, 1), u8(d, 2)));
         if (!dve) return;
         quint8 frame = u8(d, 4);
-        if (frame == 3) {
+        if (frame == 3) {                           // full: size 1, centred, no crop
             setU32(*dve, 4, 1000);
             setU32(*dve, 8, 1000);
             setU32(*dve, 12, 0);
             setU32(*dve, 16, 0);
+            for (int at = 48; at < 56; ++at) setU8(*dve, at, 0);
         } else if (frame == 1 || frame == 2) {
             const QByteArray* stored = m_store.find("KKFP", key({ u8(d, 1), u8(d, 2), frame }));
             if (!stored) return;
             copyBytes(*dve, *stored, 4, 16);
+            for (int i = 0; i < 8; ++i) setU8(*dve, 48 + i, u8(*stored, 44 + i));   // crop
         } else {
             return;
         }
         send("KeDV", dve);
+        updateAtKeyFrames(u8(d, 1), u8(d, 2));
     };
 
     h["SFKF"] = [this](const QByteArray& d) {       // store the fly key as keyframe A / B / both
@@ -1073,7 +1077,7 @@ void Device::registerHandlers() {
         if (!stored || !dve || which < 1 || which > 3) return;
         for (int frame = 1; frame <= 2; ++frame)
             if (which & frame) setU8(*stored, 1 + frame, 1);
-        send("KeFS", stored);
+        QList<QByteArray*> changed;
         for (int frame = 1; frame <= 2; ++frame) {
             QByteArray* keyFrame = m_store.find("KKFP", key({ u8(d, 0), u8(d, 1), frame }));
             if (!(which & frame) || !keyFrame) continue;
@@ -1082,18 +1086,32 @@ void Device::registerHandlers() {
             for (auto [from, to, size] : { std::tuple{ 4, 4, 20 }, std::tuple{ 28, 24, 9 },
                                            std::tuple{ 38, 34, 9 }, std::tuple{ 48, 44, 8 } })
                 for (int i = 0; i < size; ++i) setU8(*keyFrame, to + i, u8(*dve, from + i));
-            send("KKFP", keyFrame);
+            changed.append(keyFrame);
         }
+        updateAtKeyFrames(u8(d, 0), u8(d, 1));
+        for (QByteArray* keyFrame : changed) send("KKFP", keyFrame);
     };
-    h["RFKF"] = [this](const QByteArray& d) {       // clear keyframe A / B / both (values stay)
+    h["RFKF"] = [this](const QByteArray& d) {       // clear keyframe A / B / both: back to full size
         QByteArray* stored = m_store.find("KeFS", key(u8(d, 0), u8(d, 1)));
         const int which = u8(d, 2);
         if (!stored || which < 1 || which > 3) return;
-        for (int frame = 1; frame <= 2; ++frame)
-            if (which & frame) setU8(*stored, 1 + frame, 0);
-        send("KeFS", stored);
-        for (int frame = 1; frame <= 2; ++frame)
-            if (which & frame) send("KKFP", m_store.find("KKFP", key({ u8(d, 0), u8(d, 1), frame })));
+        QList<QByteArray*> cleared;
+        for (int frame = 1; frame <= 2; ++frame) {
+            QByteArray* keyFrame = m_store.find("KKFP", key({ u8(d, 0), u8(d, 1), frame }));
+            if (!(which & frame) || !keyFrame) continue;
+            setU8(*stored, 1 + frame, 0);
+            // The recorded cleared keyframe: size 1, centred, no border or
+            // crop, light at 36 degrees, altitude 25 (bytes 3 and 33 keep leftovers).
+            for (int i = 4; i < keyFrame->size(); ++i)
+                if (i != 33) setU8(*keyFrame, i, 0);
+            setU32(*keyFrame, 4, 1000);
+            setU32(*keyFrame, 8, 1000);
+            setU16(*keyFrame, 40, 360);
+            setU8(*keyFrame, 42, 25);
+            cleared.append(keyFrame);
+        }
+        updateAtKeyFrames(u8(d, 0), u8(d, 1));
+        for (QByteArray* keyFrame : cleared) send("KKFP", keyFrame);
     };
     h["RACK"] = [this](const QByteArray& d) {       // reset advanced chroma key settings
         QByteArray* chroma = m_store.find("KACk", key(u8(d, 0), u8(d, 1)));
@@ -1368,6 +1386,7 @@ void Device::registerHandlers() {
             t.data = m.bytes.isEmpty() ? Macro::encode(m.ops) : m.bytes;
         } else if (t.store == kStillStore && stillValid(t.index)) {
             t.data = stillBytes(t.index);
+            noteStillTransfer(t.index);
         } else {
             QByteArray error(4, '\0');
             setU16(error, 0, id);
@@ -1412,6 +1431,7 @@ void Device::registerHandlers() {
             return;
         }
         m_transfers[id] = t;
+        if (t.store == kStillStore) noteStillTransfer(t.index);
         QByteArray go(12, '\0');                     // id, 2, _, chunk size, chunk count (as recorded)
         setU16(go, 0, id);
         setU16(go, 2, 2);
@@ -1451,6 +1471,7 @@ void Device::registerHandlers() {
         if (stillField(u8(d, 0))) publishStill(u8(d, 0), false, {}, {});
     };
     h["CLMP"] = [this](const QByteArray&) {
+        noteStillTransfer(0xff);
         const QByteArray* pool = m_store.find("_mpl");
         for (int i = 0; pool && i < u8(*pool, 0); ++i) publishStill(i, false, {}, {});
     };
@@ -1468,7 +1489,7 @@ void Device::registerHandlers() {
     // Accepted, nothing to answer: peak level resets, time code request.
     for (const char* name : { "RFIP", "RFLP", "TiRq" }) h[name] = [](const QByteArray&) {};
     // Refused on the ATEM Mini (recorded: nothing changes, no answer).
-    for (const char* name : { "TlMe", "CFIP" }) h[name] = [](const QByteArray&) {};
+    for (const char* name : { "TlMe" }) h[name] = [](const QByteArray&) {};
 }
 
 // ── File transfers ──────────────────────────────────────────
@@ -1589,6 +1610,35 @@ void Device::publishStill(int index, bool valid, const QByteArray& hash, const Q
     }
     *f = still;
     send("MPfe", f);
+}
+
+// LKST byte 3 holds the still last transferred (0xff after clearing the
+// pool) and goes out with the next lock change. With 0xff there the SDK
+// reports no "lock busy" on locking (recorded); with 0 it does.
+void Device::noteStillTransfer(int index) {
+    if (QByteArray* lock = m_store.find("LKST", key16(kStillStore))) setU8(*lock, 3, static_cast<quint8>(index));
+}
+
+// KeFS byte 6: the keyframes (1 A, 2 B, 4 full) the DVE key is at now, by
+// size, position and crop. Recorded after storing, clearing and running to a
+// keyframe (not after plain DVE changes).
+void Device::updateAtKeyFrames(int me, int keyIndex) {
+    QByteArray* stored = m_store.find("KeFS", key(me, keyIndex));
+    const QByteArray* dve = m_store.find("KeDV", key(me, keyIndex));
+    if (!stored || !dve) return;
+    auto same = [&](const QByteArray& frame, int crop) {
+        for (int i = 4; i < 20; ++i) if (u8(*dve, i) != u8(frame, i)) return false;
+        for (int i = 0; i < 8; ++i) if (u8(*dve, 48 + i) != u8(frame, crop + i)) return false;
+        return true;
+    };
+    QByteArray full(56, '\0');
+    setU32(full, 4, 1000);
+    setU32(full, 8, 1000);
+    int at = same(full, 48) ? 4 : 0;
+    for (int frame = 1; frame <= 2; ++frame)
+        if (const QByteArray* kf = m_store.find("KKFP", key({ me, keyIndex, frame })); kf && same(*kf, 44)) at |= frame;
+    setU8(*stored, 6, static_cast<quint8>(at));
+    send("KeFS", stored);
 }
 
 // Fairlight fields are keyed by input (2 bytes at 0) and source (8 bytes at

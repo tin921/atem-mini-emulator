@@ -277,6 +277,12 @@ SETTERS.update({
     'CFEP': dict(echoSame=False, field='FAIP', mask=1, key=[(2, 0), (3, 1)], props=[
         prop(1, 'inputLevel', 5, 12, 1, rule=('allowbits', 11)),
     ]),
+    # Audio input configuration: FAIP supportedConfigurations at 9,
+    # configuration at 10 (mono, stereo, dual mono). Dual mono also splits the
+    # source in two on the real switcher (new FASP etc.); not emulated.
+    'CFIP': dict(echoSame=False, field='FAIP', mask=1, key=[(2, 0), (3, 1)], props=[
+        prop(0, 'configuration', 4, 10, 1, rule=('allowbits', 9)),
+    ]),
     # Fairlight master: FAMP = bands, eqEnabled, eqGain, makeupGain, ...,
     # faderGain at 12, followFadeToBlack at 16
     'CFMP': dict(echoSame=False, field='FAMP', mask=1, key=[], props=[

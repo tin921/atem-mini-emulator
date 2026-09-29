@@ -76,8 +76,11 @@ the window redraws from Device::view()
 | `src/device.*` | The switcher: state fields, one handler per command, the macro pool, a typed view for UIs |
 | `src/commands.*` | Builders for command payloads, so a local UI uses the same handlers as a client |
 | `src/fields.*` | Field store: the state as raw field payloads, in dump order |
-| `make_profile.py` | Builds a profile from a sweep golden record |
+| `src/setters_table.inc` | Generated: the setter table (see below) |
+| `tools/` | `setters_spec.py` (the table's source), `check_setters.py`, `gen_setters.py`; `infer_layout.py`, `show_command.py`, `show_transfer.py` for reading golden records |
+| `make_profile.py` | Builds a profile from a sweep golden record (`--backup` adds the macro bytes) |
 | `profiles/atem-mini_proto2.30/` | `dump.txt` (the connect dump, 364 fields) and `macros.txt` (what each stored macro changed) |
+| `profiles/atem-mini_proto2.30_2026-09-28/` | The same from the full sweep (2026-09-28), plus `macro-bytes.txt` |
 
 **The state is the connect dump.** The emulator starts from the exact bytes
 the real switcher sent when the sweep connected: all 75 field types. That is
@@ -91,8 +94,8 @@ device shows, and the emulator copies:
 
 - A command naming an input the M/E can't use (Program, Preview,
   Camera 1 Direct) is ignored; nothing is sent back.
-- Negative DVE sizes are stored as 0. Hue and light direction wrap at 360°.
-  Fade-to-black, DSK and wipe rates of 0 are stored as 1.
+- Fade-to-black, DSK and transition rates of 0 are stored as 1 (more
+  value rules under "Setters from a table" below).
 - Names are copied like `strcpy`, so bytes after the terminator keep the old
   name. "Camera 1 Direct" follows camera 1's long name, shortened to
   "xxxxxxxxxx... Direct" when too long.
@@ -100,7 +103,8 @@ device shows, and the emulator copies:
   restores that type's fill.
 - There is one DVE. A DVE transition takes it from the key: the key keeps its
   type but can't be DVE or fly. A transition selection that includes a DVE
-  key is refused ("DVE unavailable").
+  key is refused ("DVE unavailable"), and so is the DVE transition style
+  while a DVE key is on air.
 - Auto transitions, T-bar, fade to black and DSK auto run frame by frame
   (1080p24: 42 ms). Full black drops the program tally.
 - A macro runs after the rest of its packet, so run + stop in one packet
@@ -123,30 +127,72 @@ from that recording's starting state, all at once. A replayed field also
 overwrites its other values (e.g. a `KeDV` echo carries crop and border too),
 and a step that changed nothing at the time is missing.
 
-Handled commands: CInL, RInL, CPgI, CPvI, CTPr, DCut, DAut, CTPs, CTTp, CTWp,
-FtbA, FtbC, CKTp, CKeF, CKeC, CKOn, CKMs, CKDV, RFlK, CDsF, CDsC, CDsL, CDsT,
-CDsR, CDsG, CDsM, DDsA, MAct, MRCP, MSRc, MSlp, CMPr, LOCK, MPSS, SCPS, CCmd.
-Anything else is
+**Setters from a table.** Most "set value" commands are
+`[mask][key][values]` and change one field the same way. Their layouts and
+rules are data, not code: [tools/setters_spec.py](tools/setters_spec.py)
+describes 22 commands (DVE key and keyframes, luma/pattern/advanced chroma
+key, colour generators, aux, mix/dip/wipe/DVE transitions, time code, the
+Fairlight source, compressor, limiter, expander, EQ bands, master and mic
+level). [tools/check_setters.py](tools/check_setters.py) replays every such
+command in a golden record through the table and compares with what the real
+switcher sent back; [tools/gen_setters.py](tools/gen_setters.py) writes
+`src/setters_table.inc`, which `Device::applySetter` runs. The rules the
+recording showed:
+
+- clamps (a transition rate of 0 is 1, compressor ratio 1.2–20, EQ
+  frequency inside the band's range, ...), hue and light direction wrap at
+  360°, keyframe sizes/positions keep their whole part in 16 bits, negative
+  whole-number crop values are stored one lower (-1.000 → -1.001)
+- refused values change nothing and get no answer (sources a transition or
+  aux can't use, EQ shapes/ranges a band doesn't support, bevel on the DVE)
+- an accepted value that doesn't change is answered again — except sources,
+  transition rates and all audio values
+- side effects: a pattern sets its symmetry, a keyframe value marks the
+  keyframe stored (`KeFS`), the next transition's rate is also `TrPs`'s
+  frames remaining, DVE transition key settings are the stinger's too, the
+  chroma sample cursor stays inside the frame for its size
+
+**File transfers** (`FTSU`/`FTSD`/`FTDa`/`FTUA`/`FTFD`/`FTAD` →
+`FTCD`/`FTDa`/`FTDC`/`FTDE`): macros and stills download in 1396-byte chunks,
+each acknowledged; uploads end with the new `MPrp`/`MPfe` and `FTDC`. Transfer
+answers and `LKOB` go only to the client that asked (`Field::toSender`).
+Macro bytes are little-endian ops `[length][op][values]`; the known ops
+(preview input, pause, user wait) are recorded into bytes and run from
+uploaded bytes. The profile's own macro bytes come from an atem-sweep backup
+(`macro-bytes.txt`). Stills from the profile have no recorded picture and
+download as one flat colour; uploaded stills download as uploaded.
+
+Handled commands: the setter table (CKLm, CClV, CAuS, CKPt, CTDp, CTDv, CACK,
+CACC, CKFP, CKDV, CTWp, CTMx, CTCC, CMPP, CFSP, CICP, CILP, CIXP, CEBP, CFEP,
+CFIP, CFMP) and CInL, RInL, CPgI, CPvI, CTPr, DCut, DAut, CTPs, CTTp, FtbA, FtbC,
+FCut, CKTp, CKeF, CKeC, CKOn, CKMs, RFlK, SFKF, RFKF, RACK, CDsF, CDsC, CDsL,
+CDsT, CDsR, CDsG, CDsM, DDsA, MAct, MRCP, MSRc, MSlp, CMPr, LOCK, MPSS, SCPS,
+CCmd, RICD, RICE, FTSU, FTSD, FTDa, FTUA, FTFD, FTAD, SMPS, CSTL, CLMP, Capt;
+accepted without an answer: RFIP, RFLP, TiRq, TlMe. Anything else is
 acknowledged and logged as unhandled.
 
 ## Limits
 
 - It emulates what the sweep exercises. Other commands are acknowledged but
-  change nothing (logged as unhandled). That includes things an ATEM Mini
-  does have and ATEM Software Control uses: the Fairlight audio mixer (the
-  recording shows it), camera control, still upload/download, colour
-  generators and several transition parameters. Recording and streaming do
-  not exist on the base ATEM Mini.
+  change nothing (logged as unhandled). Not emulated yet: audio level meters
+  (`SFLN` → `FMLv`/`FDLv`), camera control. Recording and streaming do not
+  exist on the base ATEM Mini.
 - The profile's own macros are replayed approximations (above); macros
-  recorded on the emulator run their real steps. The SDK can download a
-  stored macro's bytes (`IBMDSwitcherMacroPool::Download` →
-  `IBMDSwitcherTransferMacro::GetMacro` → `IBMDSwitcherMacro::GetBytes`), a
-  better source for real macro steps than replayed fields — not used yet.
+  recorded or uploaded on the emulator run their real steps (known ops only).
+  Decoding the profile's macro bytes (ops 0x26, 0x47, 0x48, 0x4a, 0x4b, 0x54,
+  0x56 are not known yet) would replace the approximation.
+- `IBMDSwitcherInput::GetCameraModel` reads 0 against the emulator and
+  0xFFFFFFFF against the real switcher, with identical connect dumps; where
+  the SDK gets it is not known.
 - The transport assumes a well-behaved client on a clean network: packets
   arriving out of order can lose a command, and the session id is not
   checked after the handshake. Malformed commands are not validated, and some
   handlers ignore the M/E index (the Mini has one). Media locks have no
-  owner, and every reply goes to every client.
+  owner. The switcher answers once per frame; the emulator approximates
+  that per packet (a field changed by several commands of one packet goes
+  out once, with its last value).
+- Keyframe "stored" flags: when a value set marks a keyframe stored right
+  after it was cleared is not understood yet (2 sweep tests differ).
 - There is no video (the emulator app draws the picture).
 
 To support more, record the real switcher with atem-sweep (after adding

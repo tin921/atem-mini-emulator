@@ -146,7 +146,7 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
     client.lastRemoteId = id;
 
     // Commands: 16-bit length, 2 unused bytes, 4-character name, payload.
-    FieldList response;
+    QList<FieldList> perCommand;
     QStringList names;
     QByteArray payload = data.mid(kHeaderSize);
     for (int at = 0; at + 8 <= payload.size();) {
@@ -156,8 +156,25 @@ void Server::handleDatagram(const QByteArray& data, const QHostAddress& from, qu
         QByteArray body = payload.mid(at + 8, length - 8);
         if (m_verbose) emit log(QString("%1 > %2 %3").arg(client.name(), QString::fromLatin1(name), QString::fromLatin1(body.toHex())));
         names << QString::fromLatin1(name);
-        response += m_device->handle(name, body);
+        perCommand.append(m_device->handle(name, body));
         at += length;
+    }
+    // The switcher sends its state once per frame: a field that a later
+    // command of the packet changes again goes out once, with its last value.
+    // (Within one command every answer stays: some really come in steps.)
+    FieldList response;
+    for (int i = 0; i < perCommand.size(); ++i) {
+        for (const Field& f : perCommand[i]) {
+            bool later = false;
+            const QByteArray instance = FieldStore::instanceKey(f);
+            for (int j = i + 1; j < perCommand.size() && !later; ++j)
+                for (const Field& g : perCommand[j])
+                    if (!f.toSender && !g.toSender && g.name == f.name && FieldStore::instanceKey(g) == instance) {
+                        later = true;
+                        break;
+                    }
+            if (!later) response.append(f);
+        }
     }
     response += m_device->endOfPacket();
     if (!names.isEmpty()) emit commandsReceived(client.name(), names);
@@ -240,8 +257,18 @@ void Server::broadcast(const FieldList& fields, Client* origin, int originAck) {
         FieldList mine;
         for (const Field& f : fields)
             if (!f.toSender || &c == origin) mine.append(f);
-        if (!mine.isEmpty()) sendFields(c, mine, &c == origin ? originAck : -1);
-        else if (&c == origin && originAck >= 0) sendAck(c, static_cast<quint16>(originAck));
+        int ack = &c == origin ? originAck : -1;
+        // Answers for the asking client that come first (LKOB) go in a packet
+        // of their own, ahead of the state they change, as on the switcher.
+        int lead = 0;
+        while (lead < mine.size() && mine[lead].toSender) ++lead;
+        if (lead > 0 && lead < mine.size()) {
+            sendFields(c, mine.mid(0, lead), ack);
+            ack = -1;
+            mine = mine.mid(lead);
+        }
+        if (!mine.isEmpty()) sendFields(c, mine, ack);
+        else if (ack >= 0) sendAck(c, static_cast<quint16>(ack));
     }
 }
 

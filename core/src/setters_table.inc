@@ -231,6 +231,11 @@ constexpr Prop kCFEP_props[] = {
 };
 constexpr KeyByte kCFEP_key[] = { { 2, 0 }, { 3, 1 } };
 
+constexpr Prop kCFIP_props[] = {
+    { 0, 4, 10, 1, false, Rule::AllowBits, 9, 0, nullptr, 0, true, nullptr, 0, nullptr, 0 },   // configuration
+};
+constexpr KeyByte kCFIP_key[] = { { 2, 0 }, { 3, 1 } };
+
 constexpr Prop kCFMP_props[] = {
     { 3, 12, 12, 4, true, Rule::Clamp, -10000, 1000, nullptr, 0, true, nullptr, 0, nullptr, 0 },   // masterOutFaderGain
     { 4, 16, 16, 1, false, Rule::None, 0, 0, nullptr, 0, true, nullptr, 0, nullptr, 0 },   // masterOutFollowFadeToBlack
@@ -257,6 +262,7 @@ constexpr Setter kSetters[] = {
     { "CIXP", "AIXP", 1, kCIXP_key, 10, false, Post::None, kCIXP_props, 8 },
     { "CEBP", "AEBP", 1, kCEBP_key, 11, false, Post::None, kCEBP_props, 6 },
     { "CFEP", "FAIP", 1, kCFEP_key, 2, false, Post::None, kCFEP_props, 1 },
+    { "CFIP", "FAIP", 1, kCFIP_key, 2, false, Post::None, kCFIP_props, 1 },
     { "CFMP", "FAMP", 1, nullptr, 0, false, Post::None, kCFMP_props, 2 },
 };
 

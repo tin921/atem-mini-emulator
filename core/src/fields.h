@@ -63,6 +63,9 @@ public:
 
     // How many leading bytes identify an instance of this field type.
     static int keyLength(const QByteArray& name);
+    // The bytes that tell instances of a field type apart (leading bytes, or
+    // for media pool and Fairlight fields the index / input and source ids).
+    static QByteArray instanceKey(const Field& field);
     // Replaces the stored instance with the same name and key; false if none.
     bool replace(const Field& field);
 

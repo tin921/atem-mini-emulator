@@ -155,6 +155,8 @@ private:
     QByteArray stillBytes(int index) const;
     void publishStill(int index, bool valid, const QByteArray& hash, const QByteArray& name);
     void publishMacroSteps(int index);
+    void updateAtKeyFrames(int me, int key);   // KeFS byte 6, then send KeFS
+    void noteStillTransfer(int index);          // LKST byte 3
 
     // Inputs
     const QByteArray* input(quint16 id) const;

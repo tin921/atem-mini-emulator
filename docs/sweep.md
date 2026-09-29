@@ -15,16 +15,20 @@ emulator. The emulator's knowledge comes from recording the real switcher.
 2. **Profile.** [core/make_profile.py](../core/make_profile.py) takes the
    connect dump (every field the switcher sends a new client, up to `InCm`)
    and what each stored macro changed, into
-   [core/profiles](../core/profiles).
-3. **Behaviour.** [core/src/device.cpp](../core/src/device.cpp) has one
-   handler per command, written from the recorded command/reply pairs (byte
-   layouts, checks, clamps, quirks — see [core/README.md](../core/README.md)).
+   [core/profiles](../core/profiles). With `--backup` it also adds the
+   stored macros' bytes from an atem-sweep backup (`macro-bytes.txt`).
+3. **Behaviour.** Most "set value" commands are a table:
+   [core/tools/setters_spec.py](../core/tools/setters_spec.py), checked
+   against the golden record with `check_setters.py` and turned into C++ by
+   `gen_setters.py`. Actions, file transfers and quirks are handlers in
+   [core/src/device.cpp](../core/src/device.cpp). Both were written from the
+   recorded command/reply pairs (see [core/README.md](../core/README.md)).
 4. **Verify.** atem-sweep runs the same tests against the emulator and
    compares with the golden record:
 
    ```powershell
-   atem-emu --listen 127.0.0.2
-   atem-sweep 127.0.0.2 --verify sweep\golden\atem-mini_sdk10.2.1_proto2.30\results.json
+   atem-emu --listen 127.0.0.2 --profile profiles\atem-mini_proto2.30_2026-09-28
+   atem-sweep 127.0.0.2 --verify sweep\golden\atem-mini_sdk10.2.1_proto2.30_2026-09-28\results.json
    ```
 
 What verification compares: the SDK's return codes and read-backs, and which
@@ -54,8 +58,10 @@ Control: that capture is still to do.)
 
 1. Record a new golden record on the updated device (`atem-sweep <ip>`),
    in its own folder under `sweep/golden`.
-2. Build a profile from it with `make_profile.py`.
-3. Verify the emulator against it and extend `device.cpp` until it passes.
+2. Build a profile from it with `make_profile.py` (`--backup` for the
+   macro bytes).
+3. Verify the emulator against it; fix `setters_spec.py` (re-run
+   `check_setters.py` and `gen_setters.py`) or `device.cpp` until it passes.
 
 Keep the old record: the differences are the change.
 

@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QHash>
+#include <QSet>
 #include <QTextStream>
 
 namespace emu {
@@ -69,6 +70,14 @@ int FieldStore::keyLength(const QByteArray& name) {
         { "CCdP", 3 },
     };
     return lengths.value(name, 1);
+}
+
+QByteArray FieldStore::instanceKey(const Field& field) {
+    const QByteArray& d = field.data;
+    if (field.name == "MPfe") return d.left(1) + d.mid(2, 2);
+    static const QSet<QByteArray> audio = { "FASP", "AICP", "AILP", "AIXP", "AEBP", "FASD" };
+    if (audio.contains(field.name)) return d.left(2) + d.mid(8, field.name == "AEBP" ? 9 : 8);
+    return d.left(keyLength(field.name));
 }
 
 bool FieldStore::replace(const Field& field) {
