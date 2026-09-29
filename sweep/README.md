@@ -77,7 +77,8 @@ capture, and no verified backup.
    callback that did or didn't fire); the per-test `wire` (the commands sent
    and the fields that came back) and `wire.jsonl` of both runs say *why*.
    The emulator core was built this way with an AI coding agent reading
-   the recordings, writing the rule, and re-running the verify. Two rules
+   the recordings, writing the rule, and re-running the verify
+   ([../docs/overview.md](../docs/overview.md#where-ai-comes-in)). Two rules
    keep that honest: the golden record is never edited to make a test pass,
    and a value is left out of the comparison only when it doesn't come from
    the switcher (see [what verification compares](#what-a-verification-compares)).

@@ -19,7 +19,7 @@ Contributions are welcome. Please read this before opening a pull request.
 ## Getting started
 
 1. Fork the repository
-2. Build the project following [docs/tech.md](docs/tech.md)
+2. Build the project following [docs/overview.md](docs/overview.md#build)
 3. Make your change on a feature branch
 4. Run the conformance check (`atem-sweep 127.0.0.2 --verify ...`, see
    [sweep/README.md](sweep/README.md)) and test with the `obs-atem` plugin

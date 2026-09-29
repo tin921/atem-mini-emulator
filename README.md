@@ -55,7 +55,7 @@ It listens on **UDP 0.0.0.0:9910** at start. Options:
 | `--reference` | Start exactly as recorded: saved macros are not loaded or saved (for checks against the recordings) |
 
 The build also makes `atem-emu.exe`, the same switcher without a window
-([core/](core)). Build details: [docs/tech.md](docs/tech.md).
+([core/](core)). Build details: [docs/overview.md](docs/overview.md#build).
 
 ---
 
@@ -178,6 +178,8 @@ test as a square, coloured as it runs:
   recording to emulator code.
 - **[core/README.md](core/README.md)** — the emulator core: protocol, state,
   command handlers, the rules the recordings showed, and its limits.
+- **[docs/overview.md](docs/overview.md)** — how the pieces fit, the workflow,
+  and how an AI coding agent turns the recordings into emulator code.
 
 ---
 
@@ -185,7 +187,7 @@ test as a square, coloured as it runs:
 
 | Folder | What |
 | --- | --- |
-| [src/](src) | The emulator app: window, picture, virtual camera ([docs/tech.md](docs/tech.md)) |
+| [src/](src) | The emulator app: window, picture, virtual camera ([docs/overview.md](docs/overview.md#the-apps-architecture)) |
 | [core/](core) | The switcher itself, shared by the app and `atem-emu.exe` |
 | [sweep/](sweep) | atem-sweep and atem-sweep-gui: record the real ATEM, verify the emulator |
 
