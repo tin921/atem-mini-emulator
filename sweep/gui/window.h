@@ -136,6 +136,7 @@ private:
     QString m_outDir, m_stopFile;
     QJsonObject m_summary;
     bool m_stopping = false;
+    bool m_inTests = false;          // atem-sweep's "tests" phase is running
     int m_done = 0, m_total = 0;
     QString m_runTarget, m_runMode, m_runGolden;
     QDateTime m_runStarted;

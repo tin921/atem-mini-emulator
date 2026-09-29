@@ -1040,13 +1040,16 @@ void Window::onLine(const QString& raw) {
     if (!line.startsWith("@@")) {
         const QString& text = line;
         m_log << text;
-        if (!text.isEmpty() && !text.startsWith('[') && !text.startsWith("diff:") && !text.startsWith("note:")
-            && !text.startsWith("problem:"))
+        // While the tests run, the status line follows them (not the
+        // console's warnings and coverage lists).
+        if (!m_inTests && !text.isEmpty() && !text.startsWith('[') && !text.startsWith("diff:") &&
+            !text.startsWith("note:") && !text.startsWith("problem:"))
             setStatus(text);
         return;
     }
     QJsonObject o = QJsonDocument::fromJson(line.mid(2).toUtf8()).object();
     if (o.contains("start")) {
+        setStatus(QString("Test %1 of %2: %3").arg(o["i"].toInt()).arg(o["n"].toInt()).arg(o["start"].toString()));
         auto it = m_index.find(o["start"].toString());
         if (it != m_index.end()) {
             m_model.tests[*it].status = St::Running;
@@ -1076,6 +1079,7 @@ void Window::onLine(const QString& raw) {
         refresh();
     } else if (o.contains("phase")) {
         QString ph = o["phase"].toString(), st = o["state"].toString();
+        if (ph == "tests") m_inTests = st == "start";
         m_phases->setState(ph, st);
     } else if (o.contains("summary")) {
         m_summary = o["summary"].toObject();
@@ -1087,6 +1091,7 @@ void Window::onFinished(int code) {
     Job job = m_job;
     m_job = Job::None;
     m_stopping = false;
+    m_inTests = false;
     if (m_emu && m_emu->state() != QProcess::NotRunning) {
         m_emu->kill();
         m_emu->waitForFinished(2000);
