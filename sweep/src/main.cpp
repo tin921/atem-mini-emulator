@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
     }
 
     registerConnectTests();
+    registerProbeTests();
     registerInputTests();
     registerMixEffectTests();
     registerKeyTests();

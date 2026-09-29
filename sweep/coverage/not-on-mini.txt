@@ -1,85 +1,85 @@
 # SDK interfaces / methods the ATEM Mini (base model) does not have.
 # Interface or Interface::Method<TAB>evidence<TAB>reason
-#   recorded = the real ATEM Mini refused it in a sweep run
-#   expected = not confirmed yet: to be probed (read-only) on the real ATEM,
-#              then changed to "recorded" or removed from this list
+#   recorded = the real ATEM Mini showed it (probe.interfaces / probe.features
+#              in a sweep run: the interface could not be obtained, its
+#              iterator lists nothing, or the getter answers E_NOTIMPL)
 # A method listed here is never a sweep target; categories.py counts it as
-# "not on the ATEM Mini".
+# "not on the ATEM Mini". Probe run: 2026-09-28
 
-# ── recorded (sweep 2026-09-26: interface not available) ──
-IBMDSwitcherAudioInput	recorded	classic audio mixer: the Mini has Fairlight audio
+# ── interfaces the switcher does not give out ──
+IBMDSwitcherAudioHeadphoneOutput	recorded	classic audio mixer
+IBMDSwitcherAudioHeadphoneOutputIterator	recorded	classic audio mixer
+IBMDSwitcherAudioInput	recorded	classic audio mixer (the Mini has Fairlight audio)
 IBMDSwitcherAudioInputIterator	recorded	classic audio mixer
+IBMDSwitcherAudioInputXLR	recorded	classic audio mixer, XLR inputs
 IBMDSwitcherAudioMixer	recorded	classic audio mixer
+IBMDSwitcherAudioMonitorOutput	recorded	classic audio mixer
+IBMDSwitcherAudioMonitorOutputIterator	recorded	classic audio mixer
+IBMDSwitcherAudioRoutingOutput	recorded	not obtainable on this model
+IBMDSwitcherAudioRoutingSource	recorded	not obtainable on this model
 IBMDSwitcherClip	recorded	no media clips (stills only)
+IBMDSwitcherDisplayClock	recorded	not obtainable on this model
+IBMDSwitcherFairlightAudioAuxOutput	recorded	not obtainable on this model
+IBMDSwitcherFairlightAudioAuxOutputInput	recorded	not obtainable on this model
+IBMDSwitcherFairlightAudioAuxOutputInputIterator	recorded	not obtainable on this model
+IBMDSwitcherFairlightAudioHeadphoneOutput	recorded	not obtainable on this model
+IBMDSwitcherFairlightAudioSolo	recorded	not obtainable on this model
+IBMDSwitcherIdentityInformation	recorded	identity information (larger models)
+IBMDSwitcherInputAuxShadow	recorded	not obtainable on this model
+IBMDSwitcherInputAuxShadowIterator	recorded	not obtainable on this model
+IBMDSwitcherInputSuperSource	recorded	not obtainable on this model
+IBMDSwitcherKeyChromaParameters	recorded	classic chroma key (the Mini has the advanced chroma key only)
+IBMDSwitcherMixEffectBlockShadow	recorded	not obtainable on this model
+IBMDSwitcherMixEffectBlockShadowIterator	recorded	not obtainable on this model
+IBMDSwitcherMixMinusOutput	recorded	not obtainable on this model
+IBMDSwitcherMultiView	recorded	not obtainable on this model
 IBMDSwitcherRecordAV	recorded	no recording on the base model
 IBMDSwitcherRecordDisk	recorded	no recording
 IBMDSwitcherRecordDiskIterator	recorded	no recording
+IBMDSwitcherRemoteSource	recorded	not obtainable on this model
+IBMDSwitcherRemoteSourceConfiguration	recorded	not obtainable on this model
+IBMDSwitcherRemoteSourceExternal	recorded	not obtainable on this model
+IBMDSwitcherRemoteSourceIterator	recorded	not obtainable on this model
+IBMDSwitcherSerialPort	recorded	not obtainable on this model
 IBMDSwitcherStreamRTMP	recorded	no streaming on the base model
+IBMDSwitcherSuperSourceBorder	recorded	not obtainable on this model
+IBMDSwitcherSuperSourceBox	recorded	not obtainable on this model
+IBMDSwitcherSuperSourceBoxIterator	recorded	not obtainable on this model
+IBMDSwitcherTalkback	recorded	not obtainable on this model
+IBMDSwitcherTransitionStingerParameters	recorded	not obtainable on this model
+IBMDSwitcherVisca	recorded	not obtainable on this model
+IBMDSwitcherViscaDevice	recorded	not obtainable on this model
+IBMDSwitcherViscaDeviceIterator	recorded	not obtainable on this model
 
-# ── expected: whole interfaces ──
-IBMDSwitcherAudio	expected	audio clip bytes (no clips)
-IBMDSwitcherAudioHeadphoneOutput	expected	classic audio
-IBMDSwitcherAudioHeadphoneOutputIterator	expected	classic audio
-IBMDSwitcherAudioInputXLR	expected	classic audio, XLR inputs
-IBMDSwitcherAudioMonitorOutput	expected	classic audio
-IBMDSwitcherAudioMonitorOutputIterator	expected	classic audio
-IBMDSwitcherAudioRoutingOutput	expected	audio routing (larger models)
-IBMDSwitcherAudioRoutingOutputIterator	expected	audio routing
-IBMDSwitcherAudioRoutingSource	expected	audio routing
-IBMDSwitcherAudioRoutingSourceIterator	expected	audio routing
-IBMDSwitcherDisplayClock	expected	display clock (larger models)
-IBMDSwitcherFairlightAudioAuxOutput	expected	no aux audio outputs
-IBMDSwitcherFairlightAudioAuxOutputInput	expected	no aux audio outputs
-IBMDSwitcherFairlightAudioAuxOutputInputIterator	expected	no aux audio outputs
-IBMDSwitcherFairlightAudioAuxOutputIterator	expected	no aux audio outputs
-IBMDSwitcherFairlightAudioHeadphoneOutput	expected	no headphone output on the base model
-IBMDSwitcherFairlightAudioHeadphoneOutputIterator	expected	no headphone output
-IBMDSwitcherFairlightAudioSolo	expected	solo needs a headphone/monitor output
-IBMDSwitcherInputAuxShadow	expected	aux shadow (larger models)
-IBMDSwitcherInputAuxShadowIterator	expected	aux shadow
-IBMDSwitcherInputSuperSource	expected	no SuperSource
-IBMDSwitcherMixEffectBlockShadow	expected	M/E shadow (larger models)
-IBMDSwitcherMixEffectBlockShadowIterator	expected	M/E shadow
-IBMDSwitcherMixMinusOutput	expected	no mix-minus outputs
-IBMDSwitcherMixMinusOutputIterator	expected	no mix-minus outputs
-IBMDSwitcherMultiView	expected	no MultiView on the base model
-IBMDSwitcherMultiViewIterator	expected	no MultiView
-IBMDSwitcherRemoteSource	expected	remote sources (larger models)
-IBMDSwitcherRemoteSourceConfiguration	expected	remote sources
-IBMDSwitcherRemoteSourceExternal	expected	remote sources
-IBMDSwitcherRemoteSourceIterator	expected	remote sources
-IBMDSwitcherSerialPort	expected	no serial port
-IBMDSwitcherSerialPortIterator	expected	no serial port
-IBMDSwitcherSuperSourceBorder	expected	no SuperSource
-IBMDSwitcherSuperSourceBox	expected	no SuperSource
-IBMDSwitcherSuperSourceBoxIterator	expected	no SuperSource
-IBMDSwitcherTalkback	expected	no talkback
-IBMDSwitcherTalkbackIterator	expected	no talkback
-IBMDSwitcherTransitionStingerParameters	expected	stinger transitions need clips
-IBMDSwitcherVisca	expected	no VISCA / serial camera control
-IBMDSwitcherViscaDevice	expected	no VISCA
-IBMDSwitcherViscaDeviceIterator	expected	no VISCA
+# ── iterators the switcher gives out, but empty (nothing of that kind exists) ──
+IBMDSwitcherAudioRoutingOutputIterator	recorded	lists no AudioRoutingOutput
+IBMDSwitcherAudioRoutingSourceIterator	recorded	lists no AudioRoutingSource
+IBMDSwitcherFairlightAudioAuxOutputIterator	recorded	lists no FairlightAudioAuxOutput
+IBMDSwitcherFairlightAudioHeadphoneOutputIterator	recorded	lists no FairlightAudioHeadphoneOutput
+IBMDSwitcherMixMinusOutputIterator	recorded	lists no MixMinusOutput
+IBMDSwitcherMultiViewIterator	recorded	lists no MultiView
+IBMDSwitcherSerialPortIterator	recorded	lists no SerialPort
+IBMDSwitcherTalkbackIterator	recorded	lists no Talkback
 
-# ── expected: methods for hardware the Mini lacks (on interfaces it has) ──
-IBMDSwitcher::GetMethodForDownConvertedSD	expected	SD down-conversion (SDI models)
-IBMDSwitcher::SetMethodForDownConvertedSD	expected	SD down-conversion
-IBMDSwitcher::GetDownConvertedHDVideoMode	expected	HD down-conversion (SDI models)
-IBMDSwitcher::SetDownConvertedHDVideoMode	expected	HD down-conversion
-IBMDSwitcher::GetMultiViewVideoMode	expected	no MultiView
-IBMDSwitcher::SetMultiViewVideoMode	expected	no MultiView
-IBMDSwitcher::Get3GSDIOutputLevel	expected	no SDI outputs
-IBMDSwitcher::Set3GSDIOutputLevel	expected	no SDI outputs
-IBMDSwitcher::GetSuperSourceCascade	expected	no SuperSource
-IBMDSwitcher::SetSuperSourceCascade	expected	no SuperSource
-IBMDSwitcher::SuspendStreaming	expected	no streaming
-IBMDSwitcher::AllowStreamingToResume	expected	no streaming
-IBMDSwitcher::GetTimecodeSdiOutputEnabled	expected	no SDI outputs
-IBMDSwitcher::SetTimecodeSdiOutputEnabled	expected	no SDI outputs
-IBMDSwitcherInput::GetCameraModel	expected	VISCA camera model
-IBMDSwitcherInput::SetCameraModel	expected	VISCA camera model
-IBMDSwitcherInput::GetViscaDeviceId	expected	VISCA
-IBMDSwitcherInput::SetViscaDeviceId	expected	VISCA
-IBMDSwitcherMediaPool::CreateAudio	expected	audio for clips (no clips)
-IBMDSwitcherMediaPool::GetFrameTotalForClips	expected	no clips
-IBMDSwitcherMediaPool::GetClipMaxFrameCounts	expected	no clips
-IBMDSwitcherMediaPool::SetClipMaxFrameCounts	expected	no clips
+# ── methods for hardware the Mini lacks (on interfaces it has) ──
+IBMDSwitcher::Get3GSDIOutputLevel	recorded	Get3GSDIOutputLevel answers E_NOTIMPL
+IBMDSwitcher::Set3GSDIOutputLevel	recorded	Get3GSDIOutputLevel answers E_NOTIMPL
+IBMDSwitcher::GetDownConvertedHDVideoMode	recorded	GetDownConvertedHDVideoMode answers E_NOTIMPL
+IBMDSwitcher::SetDownConvertedHDVideoMode	recorded	GetDownConvertedHDVideoMode answers E_NOTIMPL
+IBMDSwitcher::GetMethodForDownConvertedSD	recorded	GetMethodForDownConvertedSD answers E_NOTIMPL
+IBMDSwitcher::SetMethodForDownConvertedSD	recorded	GetMethodForDownConvertedSD answers E_NOTIMPL
+IBMDSwitcher::GetMultiViewVideoMode	recorded	GetMultiViewVideoMode answers E_NOTIMPL
+IBMDSwitcher::SetMultiViewVideoMode	recorded	GetMultiViewVideoMode answers E_NOTIMPL
+IBMDSwitcher::GetSuperSourceCascade	recorded	GetSuperSourceCascade answers E_NOTIMPL
+IBMDSwitcher::SetSuperSourceCascade	recorded	GetSuperSourceCascade answers E_NOTIMPL
+IBMDSwitcher::SuspendStreaming	recorded	no streaming (IBMDSwitcherStreamRTMP not obtainable)
+IBMDSwitcher::AllowStreamingToResume	recorded	no streaming (IBMDSwitcherStreamRTMP not obtainable)
+IBMDSwitcherInput::GetCameraModel	recorded	DoesSupportCameraModel is false (VISCA)
+IBMDSwitcherInput::SetCameraModel	recorded	DoesSupportCameraModel is false (VISCA)
+IBMDSwitcherInput::GetViscaDeviceId	recorded	DoesSupportCameraModel is false (VISCA)
+IBMDSwitcherInput::SetViscaDeviceId	recorded	DoesSupportCameraModel is false (VISCA)
+IBMDSwitcherMediaPool::GetFrameTotalForClips	recorded	no clips (frame total 0, IBMDSwitcherClip not obtainable)
+IBMDSwitcherMediaPool::GetClipMaxFrameCounts	recorded	no clips (frame total 0, IBMDSwitcherClip not obtainable)
+IBMDSwitcherMediaPool::SetClipMaxFrameCounts	recorded	no clips (frame total 0, IBMDSwitcherClip not obtainable)
+IBMDSwitcherMediaPool::CreateAudio	recorded	no clips (frame total 0, IBMDSwitcherClip not obtainable)
+IBMDSwitcherAudio	recorded	clip audio: CreateAudio works locally, but there are no clips to use it with

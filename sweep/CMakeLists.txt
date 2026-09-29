@@ -30,6 +30,8 @@ add_executable(atem-sweep
     src/wireproxy.cpp
     src/tests_common.h
     src/tests_connect.cpp
+    src/tests_probe.cpp
+    src/probe_ifaces.inc
     src/tests_inputs.cpp
     src/tests_mixeffect.cpp
     src/tests_key.cpp

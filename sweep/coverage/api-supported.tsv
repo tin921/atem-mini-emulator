@@ -20,6 +20,8 @@ IBMDSwitcher::GetTimeCodeExternal	3 sweep	to record and emulate
 IBMDSwitcher::GetTimeCodeMode	1 emulator	verified against the real ATEM record
 IBMDSwitcher::SetTimeCodeMode	3 sweep	to record and emulate
 IBMDSwitcher::DoesSupportTimecodeSdiOutputEnabledSetting	3 sweep	to record and emulate
+IBMDSwitcher::GetTimecodeSdiOutputEnabled	3 sweep	to record and emulate
+IBMDSwitcher::SetTimecodeSdiOutputEnabled	3 sweep	to record and emulate
 IBMDSwitcher::GetAreOutputsConfigurable	3 sweep	to record and emulate
 IBMDSwitcher::DoesSupportAutoVideoMode	1 emulator	verified against the real ATEM record
 IBMDSwitcher::GetAutoVideoMode	1 emulator	verified against the real ATEM record
@@ -305,12 +307,6 @@ IBMDSwitcherHyperDeckClipIterator::Next	4 hardware	needs a HyperDeck with clips
 IBMDSwitcherHyperDeckClipIterator::GetById	4 hardware	needs a HyperDeck with clips
 IBMDSwitcherHyperDeckIterator::Next	1 emulator	verified against the real ATEM record
 IBMDSwitcherHyperDeckIterator::GetById	4 hardware	needs a HyperDeck on the network
-IBMDSwitcherIdentityInformation::GetUniqueId	3 sweep	to record and emulate
-IBMDSwitcherIdentityInformation::GetIpAddress	3 sweep	to record and emulate
-IBMDSwitcherIdentityInformation::GetMdnsName	3 sweep	to record and emulate
-IBMDSwitcherIdentityInformation::GetDeviceName	3 sweep	to record and emulate
-IBMDSwitcherIdentityInformation::AddCallback	3 sweep	to record and emulate
-IBMDSwitcherIdentityInformation::RemoveCallback	3 sweep	to record and emulate
 IBMDSwitcherInput::GetPortType	1 emulator	verified against the real ATEM record
 IBMDSwitcherInput::GetInputAvailability	1 emulator	verified against the real ATEM record
 IBMDSwitcherInput::SetShortName	1 emulator	verified against the real ATEM record
@@ -409,18 +405,6 @@ IBMDSwitcherKeyAdvancedChromaParameters::ResetChromaCorrection	3 sweep	to record
 IBMDSwitcherKeyAdvancedChromaParameters::ResetColorAdjustments	3 sweep	to record and emulate
 IBMDSwitcherKeyAdvancedChromaParameters::AddCallback	3 sweep	to record and emulate
 IBMDSwitcherKeyAdvancedChromaParameters::RemoveCallback	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::GetHue	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::SetHue	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::GetGain	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::SetGain	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::GetYSuppress	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::SetYSuppress	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::GetLift	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::SetLift	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::GetNarrow	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::SetNarrow	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::AddCallback	3 sweep	to record and emulate
-IBMDSwitcherKeyChromaParameters::RemoveCallback	3 sweep	to record and emulate
 IBMDSwitcherKeyDVEParameters::GetShadow	1 emulator	verified against the real ATEM record
 IBMDSwitcherKeyDVEParameters::SetShadow	1 emulator	verified against the real ATEM record
 IBMDSwitcherKeyDVEParameters::GetLightSourceDirection	1 emulator	verified against the real ATEM record

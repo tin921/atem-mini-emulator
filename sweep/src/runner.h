@@ -69,6 +69,7 @@ void addTest(const QString& id, const QString& title, std::function<void(Ctx&)> 
 
 // Test groups (tests_*.cpp).
 void registerConnectTests();
+void registerProbeTests();
 void registerInputTests();
 void registerMixEffectTests();
 void registerKeyTests();
