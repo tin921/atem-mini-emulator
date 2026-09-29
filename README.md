@@ -167,11 +167,7 @@ verify:  atem-sweep ─► SDK ─► recording proxy ─► emulator
 ```
 
 The sweep runs from the command line or its own window, which shows every
-test as a square, coloured as it runs:
-
-![atem-sweep in a console, through its recording proxy](docs/sweep-cli.png)
-
-![atem-sweep-gui: every test a square](docs/sweep-gui.png)
+test as a square, coloured as it runs.
 
 - **[sweep/README.md](sweep/README.md)** — the sweep, the proxy, recording
   safely (backups), the golden records, coverage, and the workflow from a
