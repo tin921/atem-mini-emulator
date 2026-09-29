@@ -81,6 +81,7 @@ aid only; the reverse-engineering data is the sweep's recorded responses.
 ```powershell
 atem-sweep 192.168.0.240 --backup            # read-only; into backups\<time>
 atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences
+atem-sweep 192.168.0.240 --restore backups\A # put macros + stills back, then verify
 ```
 
 | In the backup folder | What |
@@ -95,8 +96,8 @@ atem-sweep --compare backups\A backups\B     # 0 = identical, 1 = differences
 │ backup A │───►│ tests: create, list, │───►│ backup B │───►│ restore  │───►│ backup C     │
 │          │    │ change, delete, ...  │    │          │    │ from A   │    │ compare C, A │
 └──────────┘    └──────────┬───────────┘    └──────────┘    └──────────┘    └──────────────┘
- state, macros,            ▼                 what the tests  step 2: not     must be
- stills          results.json, wire.jsonl    left behind     built yet       identical
+ state, macros,            ▼                 what the tests  macros and      must be
+ stills          results.json, wire.jsonl    left behind     stills          identical
                  (the reverse-engineering
                  data)
 ```
@@ -107,7 +108,30 @@ recordings are the reverse-engineering data.
 Taking a backup only downloads; it never changes the switcher. A backup that
 misses anything says so (`"complete": false`, exit code 3). Backups go to
 `sweep/backups/`, which git ignores: they hold your stored macros and
-stills. Restoring a backup is the next step (not built yet).
+stills.
+
+**Restore** checks every backup file's checksum and that it is the same
+product, refuses while a macro runs or records, and asks first (`--yes`
+skips). Macros are uploaded when their bytes differ, renamed when only the
+name or description does, deleted when the backup's slot is empty; stills
+the same, by the switcher's hash. Settings are not written by the restore
+(the sweep puts back the settings its tests change). Then it waits 10 s,
+takes a new backup and compares it with the one restored: exit 0 only when
+identical, 5 when anything differs.
+
+Verified on the real ATEM Mini (2026-09-28): backup A, restore a test backup
+(a macro and a still added in empty slots, a macro and a still renamed),
+restore A, verification backup identical to A — all 364 state fields, the
+4 macros' bytes and the 3 stills' hashes.
+
+Behaviour of the real switcher found on the way:
+- Macro names are cut to 20 characters.
+- For a few seconds after stored content changes, a new client's connect
+  dump still shows some old content (e.g. a deleted macro as used) and the
+  switcher corrects it with updates right after the dump; hence the 10 s
+  wait before verifying.
+- Unused bytes of many state fields hold leftovers (pieces of names); they
+  change with the stored content and come back when it does.
 
 ## Golden record
 

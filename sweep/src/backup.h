@@ -28,6 +28,15 @@ class WireProxy;
 int takeBackup(Switcher& s, WireProxy* wire, const QString& connectAddress, const QString& target,
                const QString& dir, QTextStream& out);
 
+// Puts the switcher's stored content back to a backup: macros (uploaded
+// when their bytes differ, renamed when only the name/description does,
+// deleted when the backup has none) and stills (the same, by the switcher's
+// hash). Checks every backup file's checksum first. Settings are not written
+// here (the sweep restores the settings it changes); a verification backup
+// compared with this one shows any that differ. 0 = done, 2 = could not
+// start, 3 = something failed, 4 = a macro was running or recording.
+int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir, QTextStream& out);
+
 // Compares two backup folders: state fields, macros, stills. Returns 0 when
 // they match, 1 when they differ, 2 when a folder can't be read.
 int compareBackups(const QString& dirA, const QString& dirB, QTextStream& out);

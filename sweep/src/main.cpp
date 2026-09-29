@@ -6,6 +6,7 @@
 //   usb:     atem-sweep usb                           (API only, no wire capture)
 //   backup:  atem-sweep 192.168.0.240 --backup [--out DIR]   (read-only: state, macros, stills)
 //   compare: atem-sweep --compare DIR1 DIR2                  (two backups)
+//   restore: atem-sweep 192.168.0.240 --restore DIR          (then verifies with a new backup)
 //
 // Safety policy: reads everything, changes settings and puts them back, runs
 // and stops macros. Never deletes, uploads, clears, records or streams.
@@ -69,7 +70,10 @@ int main(int argc, char** argv) {
     QCommandLineOption backup("backup", "Run no tests: take a full backup (state, macros, stills) into the output "
                                         "folder. Read-only.");
     QCommandLineOption compare("compare", "Compare two backup folders (given as the two arguments) and exit.");
-    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture, backup, compare });
+    QCommandLineOption restore("restore", "Put the switcher's macros and stills back to a backup folder, then take "
+                                          "a new backup and compare it with that folder. Asks first unless --yes.",
+                               "backup");
+    p.addOptions({ verify, noProxy, only, list, outDir, yes, allowCamera, coverageDir, capture, backup, compare, restore });
     p.process(app);
 
     if (p.isSet(compare)) {
@@ -134,7 +138,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (p.isSet(backup)) {
+    if (p.isSet(backup) || p.isSet(restore)) {
         QString t = target.compare("usb", Qt::CaseInsensitive) == 0 ? QString() : target;
         bool loopback = t == "127.0.0.1" || t.compare("localhost", Qt::CaseInsensitive) == 0;
         bool proxy = !p.isSet(noProxy) && !t.isEmpty() && !loopback;
@@ -153,9 +157,41 @@ int main(int argc, char** argv) {
             }
         }
         QTextStream out(stdout);
-        out << "atem-sweep backup (read-only)  target: " << (t.isEmpty() ? QString("USB") : t) << "\n" << Qt::flush;
-        int rc = takeBackup(s, wire, proxy ? QString("127.0.0.1") : t, t, dir, out);
-        s.disconnect();
+        QString connectAddress = proxy ? QString("127.0.0.1") : t;
+        int rc = 0;
+        if (p.isSet(restore)) {
+            QString from = p.value(restore);
+            out << "atem-sweep restore  target: " << (t.isEmpty() ? QString("USB") : t) << "  from: "
+                << QDir::toNativeSeparators(from) << "\n"
+                << "\x1b[33mThis overwrites the switcher's stored macros and stills with the backup's\n"
+                << "(slots empty in the backup are cleared).\x1b[0m\n";
+            if (!p.isSet(yes)) {
+                out << "Continue? [y/N] " << Qt::flush;
+                std::string answer;
+                std::getline(std::cin, answer);
+                if (answer != "y" && answer != "Y") return 6;
+            }
+            rc = restoreBackup(s, connectAddress, from, out);
+            s.disconnect();
+            if (rc == 0 || rc == 3) {
+                // Right after uploads/deletes the switcher's connect dump for a new
+                // client still shows some old content (it corrects it with updates
+                // after the dump), so give it time to settle before verifying.
+                constexpr int kSettleSeconds = 10;
+                out << "Waiting " << kSettleSeconds << " s for the switcher to settle, then verifying with a new backup...\n"
+                    << Qt::flush;
+                QThread::sleep(kSettleSeconds);
+                int brc = takeBackup(s, wire, connectAddress, t, dir, out);
+                s.disconnect();
+                out << "Compared with " << QDir::toNativeSeparators(from) << ":\n";
+                int crc = brc == 0 ? compareBackups(from, dir, out) : 2;
+                if (rc == 0) rc = crc == 0 ? 0 : 5;   // 5: not back as it was
+            }
+        } else {
+            out << "atem-sweep backup (read-only)  target: " << (t.isEmpty() ? QString("USB") : t) << "\n" << Qt::flush;
+            rc = takeBackup(s, wire, connectAddress, t, dir, out);
+            s.disconnect();
+        }
         if (wire) {
             wire->stopProxy();
             delete wire;

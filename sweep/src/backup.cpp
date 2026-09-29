@@ -101,14 +101,24 @@ bool pollUntil(const std::function<bool()>& cond, int ms) {
 }
 
 // The connect dump this connection received: every field up to and
-// including InCm, each packet once (resends dropped).
+// including InCm, each packet once (resends dropped). Only this connection's
+// packets: the client that sent the first SYN after the mark. A connection
+// closed just before (e.g. the restore's) may still be receiving packets.
 std::vector<AtemField> connectDump(const WireProxy& wire, size_t mark, bool* complete) {
     std::vector<AtemField> out;
-    std::set<std::pair<quint16, quint16>> seen;
+    std::set<quint16> seen;
     *complete = false;
-    for (const auto& p : wire.since(mark)) {
-        if (p.toDevice) continue;
-        if (p.packetId() && !seen.insert({ p.client, p.packetId() }).second) continue;
+    std::vector<WirePacket> packets = wire.since(mark);
+    int client = -1;
+    for (const auto& p : packets) {
+        if (p.toDevice && (p.flags() & 0x10)) {   // SYN
+            client = p.client;
+            break;
+        }
+    }
+    for (const auto& p : packets) {
+        if (p.toDevice || p.client != client) continue;
+        if (p.packetId() && !seen.insert(p.packetId()).second) continue;
         for (const auto& f : p.fields()) {
             out.push_back(f);
             if (f.name == "InCm") {
@@ -426,4 +436,271 @@ int compareBackups(const QString& dirA, const QString& dirB, QTextStream& out) {
 
     out << (differences ? QString("%1 difference(s)").arg(differences) : QString("identical")) << "\n";
     return differences ? 1 : 0;
+}
+
+// ── Restore ──────────────────────────────────────────────────
+
+namespace {
+
+uint32_t fromFourcc(const QString& s) {
+    QByteArray b = s.toLatin1();
+    if (b.size() != 4) return 0;
+    return (uint32_t(uchar(b[0])) << 24) | (uint32_t(uchar(b[1])) << 16) | (uint32_t(uchar(b[2])) << 8) | uchar(b[3]);
+}
+
+QByteArray readFile(const QString& path) {
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
+
+// Downloads one stored macro's bytes (the pool callback must feed `wait`).
+QString downloadMacro(IBMDSwitcherMacroPool* pool, unsigned int i, TransferWait& wait, QByteArray* data) {
+    wait.start(static_cast<int>(i));
+    Ref<IBMDSwitcherTransferMacro> transfer;
+    HRESULT hr = SDK_CALL(IBMDSwitcherMacroPool, pool, Download, i, transfer.out());
+    if (FAILED(hr) || !transfer) return "Download " + hrText(hr);
+    QString result = wait.wait();
+    if (result != "done") return result;
+    Ref<IBMDSwitcherMacro> macro;
+    void* bytes = nullptr;
+    if (FAILED(SDK_CALL(IBMDSwitcherTransferMacro, transfer.p, GetMacro, macro.out())) || !macro ||
+        FAILED(SDK_CALL(IBMDSwitcherMacro, macro.p, GetBytes, &bytes)) || !bytes)
+        return "no bytes";
+    *data = QByteArray(static_cast<const char*>(bytes), SDK_CALL(IBMDSwitcherMacro, macro.p, GetSize));
+    return "done";
+}
+
+QString hashHex(const BMDSwitcherHash& hash) {
+    return QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(hash.data), 16).toHex());
+}
+
+} // namespace
+
+int restoreBackup(Switcher& s, const QString& connectAddress, const QString& dir, QTextStream& out) {
+    QFile mf(dir + "/manifest.json");
+    if (!mf.open(QIODevice::ReadOnly)) {
+        out << "Cannot read " << QDir::toNativeSeparators(dir + "/manifest.json") << "\n";
+        return 2;
+    }
+    QJsonObject manifest = QJsonDocument::fromJson(mf.readAll()).object();
+    if (manifest["format"].toString() != "atem-sweep-backup" || !manifest["complete"].toBool()) {
+        out << "Not a complete atem-sweep backup: " << QDir::toNativeSeparators(dir) << "\n";
+        return 2;
+    }
+    // Every file must match its checksum before anything is written.
+    std::map<int, QJsonObject> macrosIn, stillsIn;
+    std::map<int, QByteArray> macroBytes, stillBytes;
+    for (const auto& v : manifest["macros"].toArray()) {
+        QJsonObject m = v.toObject();
+        int i = m["index"].toInt();
+        QByteArray data = readFile(slotFile(dir + "/macros", i, "bin"));
+        if (data.isEmpty() || sha256(data) != m["sha256"].toString()) {
+            out << "Backup file for macro " << i << " is missing or damaged: nothing restored\n";
+            return 2;
+        }
+        macrosIn[i] = m;
+        macroBytes[i] = data;
+    }
+    for (const auto& v : manifest["stills"].toArray()) {
+        QJsonObject m = v.toObject();
+        int i = m["index"].toInt();
+        QByteArray data = readFile(slotFile(dir + "/stills", i, "raw"));
+        if (data.isEmpty() || sha256(data) != m["sha256"].toString()) {
+            out << "Backup file for still " << i << " is missing or damaged: nothing restored\n";
+            return 2;
+        }
+        stillsIn[i] = m;
+        stillBytes[i] = data;
+    }
+
+    BMDSwitcherConnectToFailure fail = bmdSwitcherConnectToFailureNoResponse;
+    HRESULT hr = s.connect(connectAddress, &fail);
+    if (FAILED(hr)) {
+        out << "Cannot connect: " << hrText(hr) << " " << fourcc(static_cast<uint32_t>(fail)) << "\n";
+        return 2;
+    }
+    BSTR bname = nullptr;
+    QString product = SUCCEEDED(SDK_CALL(IBMDSwitcher, s.sw, GetProductName, &bname)) ? takeBstr(bname) : QString();
+    if (product != manifest["product"].toString()) {
+        out << "The backup is of a " << manifest["product"].toString() << ", this is a " << product << ": nothing restored\n";
+        return 2;
+    }
+    if (s.macros) {
+        BMDSwitcherMacroRunStatus run = bmdSwitcherMacroRunStatusIdle;
+        BOOL loop = FALSE;
+        unsigned int index = 0;
+        BMDSwitcherMacroRecordStatus rec = bmdSwitcherMacroRecordStatusIdle;
+        SDK_CALL(IBMDSwitcherMacroControl, s.macros, GetRunStatus, &run, &loop, &index);
+        SDK_CALL(IBMDSwitcherMacroControl, s.macros, GetRecordStatus, &rec, &index);
+        if (run != bmdSwitcherMacroRunStatusIdle || rec != bmdSwitcherMacroRecordStatusIdle) {
+            out << "A macro is running or being recorded: nothing restored\n";
+            return 4;
+        }
+    }
+
+    QStringList problems;
+    int changes = 0;
+    auto report = [&](const QString& what, const QString& result, bool ok) {
+        out << "  " << what << " (" << result << ")\n" << Qt::flush;
+        if (!ok) problems << what + ": " + result;
+        ++changes;
+    };
+
+    // ── Macros ──
+    unsigned int maxMacros = 0;
+    if (!s.pool || FAILED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetMaxCount, &maxMacros))) {
+        problems << "macro pool not available";
+    } else {
+        TransferWait wait;
+        auto* sink = new Sink<IBMDSwitcherMacroPoolCallback, BMDSwitcherMacroPoolEventType, unsigned int, IBMDSwitcherTransferMacro*>(
+            [&wait](BMDSwitcherMacroPoolEventType t, unsigned int i, IBMDSwitcherTransferMacro*) {
+                if (t == bmdSwitcherMacroPoolEventTypeTransferCompleted) wait.finish(static_cast<int>(i), "done");
+                else if (t == bmdSwitcherMacroPoolEventTypeTransferFailed) wait.finish(static_cast<int>(i), "failed");
+                else if (t == bmdSwitcherMacroPoolEventTypeTransferCancelled) wait.finish(static_cast<int>(i), "cancelled");
+            });
+        SDK_CALL(IBMDSwitcherMacroPool, s.pool, AddCallback, sink);
+        for (unsigned int i = 0; i < maxMacros; ++i) {
+            BOOL valid = FALSE;
+            SDK_CALL(IBMDSwitcherMacroPool, s.pool, IsValid, i, &valid);
+            auto want = macrosIn.find(static_cast<int>(i));
+            if (want == macrosIn.end()) {
+                if (valid) {
+                    HRESULT dh = SDK_CALL(IBMDSwitcherMacroPool, s.pool, Delete, i);
+                    report(QString("macro %1: deleted").arg(i), hrText(dh), SUCCEEDED(dh));
+                }
+                continue;
+            }
+            const QJsonObject& m = want->second;
+            QString name = m["name"].toString(), description = m["description"].toString();
+            bool sameBytes = false;
+            if (valid) {
+                QByteArray current;
+                sameBytes = downloadMacro(s.pool, i, wait, &current) == "done" && current == macroBytes[static_cast<int>(i)];
+            }
+            if (sameBytes) {
+                BSTR b = nullptr;
+                QString curName = SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetName, i, &b)) ? takeBstr(b) : QString();
+                b = nullptr;
+                QString curDesc = SUCCEEDED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, GetDescription, i, &b)) ? takeBstr(b) : QString();
+                if (curName != name) {
+                    BSTR nb = makeBstr(name);
+                    HRESULT nh = SDK_CALL(IBMDSwitcherMacroPool, s.pool, SetName, i, nb);
+                    SysFreeString(nb);
+                    report(QString("macro %1: name set back to \"%2\"").arg(i).arg(name), hrText(nh), SUCCEEDED(nh));
+                }
+                if (curDesc != description) {
+                    BSTR db = makeBstr(description);
+                    HRESULT dh = SDK_CALL(IBMDSwitcherMacroPool, s.pool, SetDescription, i, db);
+                    SysFreeString(db);
+                    report(QString("macro %1: description set back").arg(i), hrText(dh), SUCCEEDED(dh));
+                }
+                continue;
+            }
+            const QByteArray& data = macroBytes[static_cast<int>(i)];
+            Ref<IBMDSwitcherMacro> macro;
+            void* buffer = nullptr;
+            QString result;
+            if (FAILED(SDK_CALL(IBMDSwitcherMacroPool, s.pool, CreateMacro, static_cast<unsigned int>(data.size()), macro.out())) ||
+                !macro || FAILED(SDK_CALL(IBMDSwitcherMacro, macro.p, GetBytes, &buffer)) || !buffer) {
+                result = "CreateMacro failed";
+            } else {
+                memcpy(buffer, data.constData(), data.size());
+                BSTR nb = makeBstr(name), db = makeBstr(description);
+                wait.start(static_cast<int>(i));
+                Ref<IBMDSwitcherTransferMacro> transfer;
+                HRESULT uh = SDK_CALL(IBMDSwitcherMacroPool, s.pool, Upload, i, nb, db, macro.p, transfer.out());
+                SysFreeString(nb);
+                SysFreeString(db);
+                result = SUCCEEDED(uh) ? wait.wait() : "Upload " + hrText(uh);
+            }
+            report(QString("macro %1: uploaded \"%2\"").arg(i).arg(name), result, result == "done");
+        }
+        SDK_CALL(IBMDSwitcherMacroPool, s.pool, RemoveCallback, sink);
+        sink->Release();
+    }
+
+    // ── Stills ──
+    unsigned int stillCount = 0;
+    Ref<IBMDSwitcherMediaPool> mediaPool;
+    Ref<IBMDSwitcherStills> st;
+    if (FAILED(s.sw->QueryInterface(__uuidof(IBMDSwitcherMediaPool), reinterpret_cast<void**>(mediaPool.out()))) || !mediaPool ||
+        FAILED(SDK_CALL(IBMDSwitcherMediaPool, mediaPool.p, GetStills, st.out())) || !st ||
+        FAILED(SDK_CALL(IBMDSwitcherStills, st.p, GetCount, &stillCount))) {
+        problems << "stills not available";
+    } else {
+        TransferWait wait;
+        auto* sink = new Sink<IBMDSwitcherStillsCallback, BMDSwitcherMediaPoolEventType, IBMDSwitcherFrame*, int>(
+            [&wait](BMDSwitcherMediaPoolEventType t, IBMDSwitcherFrame*, int i) {
+                if (t == bmdSwitcherMediaPoolEventTypeTransferCompleted) wait.finish(i, "done");
+                else if (t == bmdSwitcherMediaPoolEventTypeTransferFailed) wait.finish(i, "failed");
+                else if (t == bmdSwitcherMediaPoolEventTypeTransferCancelled) wait.finish(i, "cancelled");
+            });
+        SDK_CALL(IBMDSwitcherStills, st.p, AddCallback, sink);
+        auto* lock = new LockSink;
+        bool locked = false;
+        for (unsigned int i = 0; i < stillCount; ++i) {
+            BOOL valid = FALSE;
+            SDK_CALL(IBMDSwitcherStills, st.p, IsValid, i, &valid);
+            auto want = stillsIn.find(static_cast<int>(i));
+            if (want == stillsIn.end()) {
+                if (valid) {
+                    HRESULT ih = SDK_CALL(IBMDSwitcherStills, st.p, SetInvalid, i);
+                    report(QString("still %1: removed").arg(i), hrText(ih), SUCCEEDED(ih));
+                }
+                continue;
+            }
+            const QJsonObject& m = want->second;
+            QString name = m["name"].toString();
+            BMDSwitcherHash hash{};
+            bool sameFrame = valid && SUCCEEDED(SDK_CALL(IBMDSwitcherStills, st.p, GetHash, i, &hash)) &&
+                             hashHex(hash) == m["hash"].toString();
+            if (sameFrame) {
+                BSTR b = nullptr;
+                QString curName = SUCCEEDED(SDK_CALL(IBMDSwitcherStills, st.p, GetName, i, &b)) ? takeBstr(b) : QString();
+                if (curName != name) {
+                    BSTR nb = makeBstr(name);
+                    HRESULT nh = SDK_CALL(IBMDSwitcherStills, st.p, SetName, i, nb);
+                    SysFreeString(nb);
+                    report(QString("still %1: name set back to \"%2\"").arg(i).arg(name), hrText(nh), SUCCEEDED(nh));
+                }
+                continue;
+            }
+            if (!locked) {
+                locked = SUCCEEDED(SDK_CALL(IBMDSwitcherStills, st.p, Lock, lock)) &&
+                         pollUntil([&] { return lock->obtained.load(); }, kLockTimeoutMs);
+                if (!locked) {
+                    problems << "could not lock the stills for uploading";
+                    break;
+                }
+            }
+            const QByteArray& data = stillBytes[static_cast<int>(i)];
+            Ref<IBMDSwitcherFrame> frame;
+            void* buffer = nullptr;
+            QString result;
+            HRESULT ch = SDK_CALL(IBMDSwitcherMediaPool, mediaPool.p, CreateFrame,
+                                  static_cast<BMDSwitcherPixelFormat>(fromFourcc(m["pixelFormat"].toString())),
+                                  static_cast<unsigned int>(m["width"].toInt()), static_cast<unsigned int>(m["height"].toInt()),
+                                  frame.out());
+            if (FAILED(ch) || !frame || FAILED(SDK_CALL(IBMDSwitcherFrame, frame.p, GetBytes, &buffer)) || !buffer ||
+                frame->GetRowBytes() * frame->GetHeight() != data.size()) {
+                result = "CreateFrame " + hrText(ch);
+            } else {
+                memcpy(buffer, data.constData(), data.size());
+                BSTR nb = makeBstr(name);
+                wait.start(static_cast<int>(i));
+                HRESULT uh = SDK_CALL(IBMDSwitcherStills, st.p, Upload, i, nb, frame.p);
+                SysFreeString(nb);
+                result = SUCCEEDED(uh) ? wait.wait() : "Upload " + hrText(uh);
+            }
+            report(QString("still %1: uploaded \"%2\"").arg(i).arg(name), result, result == "done");
+        }
+        if (locked) SDK_CALL(IBMDSwitcherStills, st.p, Unlock, lock);
+        lock->Release();
+        SDK_CALL(IBMDSwitcherStills, st.p, RemoveCallback, sink);
+        sink->Release();
+    }
+
+    out << "Restore: " << changes << " change(s)" << (problems.isEmpty() ? "" : ", PROBLEMS:") << "\n";
+    for (const QString& p : problems) out << "  problem: " << p << "\n";
+    return problems.isEmpty() ? 0 : 3;
 }
