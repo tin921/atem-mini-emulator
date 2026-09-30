@@ -52,6 +52,40 @@ static void phase(const char* name, const char* state) {
     fflush(stdout);
 }
 
+// A protected run in progress: written once the backup before the sweep is
+// complete, removed once the stored content is restored and verified. If a
+// run dies in between (crash, power), the marker stays, and the next sweep of
+// a switcher refuses to start until the backup is restored.
+static QString markerPath() { return QString(SWEEP_BACKUP_DIR) + "/protected-run.json"; }
+
+static QJsonObject readMarker() {
+    QFile f(markerPath());
+    return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
+}
+
+static bool writeMarker(const QString& target, const QString& backupDir) {
+    QSaveFile f(markerPath());
+    const QByteArray data = QJsonDocument(QJsonObject{
+        { "target", target.isEmpty() ? QString("usb") : target },
+        { "backup", QDir(backupDir).absolutePath() },
+        { "started", QDateTime::currentDateTime().toString(Qt::ISODate) },
+    }).toJson();
+    return f.open(QIODevice::WriteOnly) && f.write(data) == data.size() && f.commit();
+}
+
+// Explains an unfinished protected run; true if there is one.
+static bool unfinishedRun(QTextStream& out) {
+    const QJsonObject m = readMarker();
+    // An emulator's stored content isn't worth guarding (and never blocks a switcher's sweep).
+    if (m.isEmpty() || QHostAddress(m["target"].toString()).isLoopback()) return false;
+    out << "\x1b[31mA protected run of " << m["target"].toString() << " started " << m["started"].toString()
+        << " did not finish restoring:\nthe switcher's stored macros and stills may differ from its backup. Restore them "
+           "first:\n  atem-sweep " << m["target"].toString() << " --restore \""
+        << QDir::toNativeSeparators(m["backup"].toString()) << "\"\n(a restore from that backup that checks out "
+           "identical clears this; " << QDir::toNativeSeparators(markerPath()) << ")\x1b[0m\n" << Qt::flush;
+    return true;
+}
+
 static void enableConsole() {
     SetConsoleOutputCP(CP_UTF8);
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -235,6 +269,12 @@ int main(int argc, char** argv) {
                 out << "Compared with " << QDir::toNativeSeparators(from) << ":\n";
                 int crc = brc == 0 ? compareBackups(from, dir, out) : 2;
                 if (rc == 0) rc = crc == 0 ? 0 : 5;   // 5: not back as it was
+                const QJsonObject marker = readMarker();
+                if (rc == 0 && !marker.isEmpty() &&
+                    QDir(marker["backup"].toString()).absolutePath() == QDir(from).absolutePath()) {
+                    QFile::remove(markerPath());
+                    out << "The unfinished protected run is resolved: its backup is restored and checked.\n";
+                }
                 QFile verdict(dir + "/restore-check.json");
                 if (brc == 0 && verdict.open(QIODevice::WriteOnly))
                     verdict.write(QJsonDocument(QJsonObject{ { "comparedWith", QFileInfo(from).fileName() },
@@ -281,6 +321,10 @@ int main(int argc, char** argv) {
         if (answer != "y" && answer != "Y") return 6;   // declined: nothing done
     }
 
+    const QHostAddress targetAddress(opt.target);
+    const bool localEmulator = opt.useProxy && targetAddress.isLoopback();
+    QTextStream out(stdout);
+
     // A run never writes into a folder that already holds one (e.g. a golden record).
     if (QFileInfo::exists(opt.outDir + "/results.json") || QFileInfo::exists(opt.outDir + "/wire.jsonl")) {
         QTextStream(stdout) << "\x1b[31mThe output folder already holds a run: " << QDir::toNativeSeparators(opt.outDir)
@@ -303,6 +347,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!localEmulator && unfinishedRun(out)) {
+        if (wire) {
+            wire->stopProxy();
+            delete wire;
+        }
+        return 8;
+    }
+
     // The storage tests (s.) change stored macros and stills. On a real
     // switcher they only run after a complete backup, which is restored and
     // verified afterwards. Only an emulator on a loopback address, reached
@@ -311,10 +363,7 @@ int main(int argc, char** argv) {
     // protected like a recording.
     bool storageSelected = (opt.only.isEmpty() || opt.only.startsWith("s.") || QString("s.").startsWith(opt.only)) &&
                            (opt.groups.isEmpty() || opt.groups.contains("storage"));
-    const QHostAddress targetAddress(opt.target);
-    const bool localEmulator = opt.useProxy && targetAddress.isLoopback();
     QString protectDir;
-    QTextStream out(stdout);
     if (opt.verify && localEmulator) {
         opt.storageAllowed = true;
     } else if (storageSelected || p.isSet(protect)) {
@@ -340,6 +389,13 @@ int main(int argc, char** argv) {
                 // with weaker guarantees than the one asked for.
                 out << "\x1b[31mThe backup is not complete: stopping before changing anything. To sweep without the "
                        "storage tests, leave them out (--groups without storage).\x1b[0m\n";
+                wire->stopProxy();
+                delete wire;
+                return 8;
+            }
+            if (!targetAddress.isLoopback() && !writeMarker(opt.target, protectDir + "-before")) {
+                out << "\x1b[31mCannot write " << QDir::toNativeSeparators(markerPath())
+                    << ": stopping before changing anything.\x1b[0m\n";
                 wire->stopProxy();
                 delete wire;
                 return 8;
@@ -398,6 +454,7 @@ int main(int argc, char** argv) {
             rc = 5;
         } else {
             out << "\x1b[32mStored content restored and verified.\x1b[0m\n";
+            QFile::remove(markerPath());
         }
     }
     if (wire) {

@@ -1,0 +1,43 @@
+# The emulator core on every push and pull request: build it, run the
+# offline tests, check the generated setter table hasn't drifted from its
+# spec, and replay the latest golden record through the setter table.
+# (atem-sweep and the app aren't built here: the sweep needs Blackmagic's SDK
+# headers, which can't be redistributed.)
+name: core
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qt (Core, Network)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        run: |
+          cmake -S core -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      - name: Offline tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Setter table matches its spec
+        shell: bash
+        run: |
+          python core/tools/gen_setters.py
+          git diff --exit-code core/src/setters_table.inc
+
+      - name: Setter rules against the latest golden record
+        run: python core/tools/check_setters.py sweep/golden/atem-mini_sdk10.2.1_proto2.30_2026-09-28

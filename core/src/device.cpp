@@ -1456,7 +1456,9 @@ void Device::registerHandlers() {
             t.data = m.bytes.isEmpty() ? Macro::encode(m.ops) : m.bytes;
         } else if (t.store == kStillStore && t.index >= 0 && stillValid(t.index)) {
             t.data = stillBytes(t.index);
-            noteStillTransfer(t.index);
+            // Recorded (2026-09-28): a download leaves 0 in LKST byte 3 (stills
+            // 0-2 downloaded: 6c -> 00), an upload its own index (19: 13).
+            noteStillTransfer(0);
         } else {
             QByteArray error(4, '\0');
             setU16(error, 0, id);

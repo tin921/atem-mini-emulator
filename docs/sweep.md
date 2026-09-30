@@ -97,6 +97,14 @@ backup isn't complete, the run stops before changing anything** (exit code
 storage tests, leave them out (`--groups` without `storage`); over USB they
 are skipped.
 
+**An interrupted protected run is remembered.** Once the backup before the
+sweep is complete, `backups\protected-run.json` names it; it is removed only
+when the stored content is restored and compared identical. If a run dies in
+between (a crash, a power cut), no sweep of a switcher starts (exit code 8)
+until that backup is restored: the message gives the exact
+`atem-sweep <ip> --restore <backup>` command, and a restore from it that
+checks out identical clears the marker.
+
 Only an emulator on a loopback address (127.x), reached through the proxy,
 runs the storage tests without a backup (`--verify` against it). Verifying
 against any other target is protected like a recording.
@@ -183,7 +191,7 @@ an ATEM on this PC's USB. (Two connect tests use exactly that on purpose; see
 | 5 | the switcher was not completely put back (settings or stored content) |
 | 6 | declined at the "Continue?" question: nothing was done |
 | 7 | stopped before the end (`--stop-file`): the results are partial, and never usable as a golden record |
-| 8 | no complete backup before a protected run: nothing was changed |
+| 8 | no complete backup before a protected run, or an earlier protected run never finished restoring: nothing was changed |
 
 Each run writes `runs\<time>-<mode>\`: `results.json` (per test: status,
 every observation, the SDK callbacks fired, the SDK functions called and —

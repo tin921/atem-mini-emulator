@@ -1130,8 +1130,10 @@ void Window::onFinished(int code) {
         case 4: text = "Not started: the switcher is running or recording a macro."; break;
         case 7: text = "Stopped before the end: the results are partial (not usable as a golden record)."; break;
         case 8:
-            text = "Not started: the backup before the sweep is not complete, so nothing was changed.";
-            QMessageBox::warning(this, "atem-sweep", text + "\n\nSee the log; take a backup (Backup ATEM) to check.");
+            // No complete backup, or an earlier protected run that never finished restoring.
+            text = "Not started: nothing was changed. " + m_log.value(m_log.size() - 2);
+            QMessageBox::warning(this, "atem-sweep", "The sweep did not start, and nothing was changed:\n\n" +
+                                                         m_log.mid(qMax(0, m_log.size() - 6)).join("\n"));
             break;
         case 5:
             text = "Finished, but the switcher is NOT back as it was: see the backups.";
